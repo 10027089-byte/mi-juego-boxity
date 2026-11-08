@@ -8,7 +8,8 @@ const BRAINROTS=[
 ];
 const SDK=window.Legion?.SDK||null;
 const BOXITY_SLUG='roba-al-brainrot';
-let gameplayActive=false;
+let gameplayActive=false, multiplayerRoomId='';
+let adBreakActive=false;
 
 function initializeBoxity(){
   if(!SDK||window.__boxityInitialized)return;
@@ -23,13 +24,98 @@ function initializeBoxity(){
     SDK.avatar?.onAvatarChanged?.(()=>loadAvatar());
     SDK.onEnvironmentChanged?.((environment)=>console.info('Boxity environment',environment));
     console.info('Boxity environment',SDK.environment?.());
+    const settingKeys=['master_volume','music_volume','graphics_quality','camera_sensitivity'];
+    settingKeys.forEach((key)=>{
+      SDK.settings?.listen?.(key,(value)=>{
+        if(key==='master_volume'||key==='music_volume')applyBoxityVolume(key,value);
+        if(key==='graphics_quality')applyBoxityGraphics(value);
+        if(key==='camera_sensitivity')cameraSensitivity=Number(value)||1;
+      });
+    });
+    SDK.game?.registerFeature?.('avatar');
+    SDK.game?.registerFeature?.('chat');
+    SDK.game?.registerFeature?.('emotes');
+    SDK.game?.registerFeature?.('settings');
+    SDK.game?.registerFeature?.('leaderboard');
+    SDK.game?.registerFeature?.('touch_controls');
+    SDK.party?.enable?.({maxPartySize:8});
+    SDK.leaderboard?.define?.([
+      {id:'wealth',label:'Dinero acumulado',order:'desc',mode:'best',format:'compact',reset:'weekly'},
+      {id:'brainrots',label:'Brainrots robados',order:'desc',mode:'sum',format:'number',reset:'none'}
+    ]);
+    SDK.player?.onChatMessageSent?.((message)=>showOfficialChatBubble(message));
+    SDK.chat?.onMessage?.((message)=>showOfficialChatBubble(SDK.chat?.bubbleText?.(message)||message.text||''));
+    SDK.player?.onEvent?.((event,data)=>{
+      if(event==='play_emote')playOfficialEmote(data);
+    });
+    SDK.portal?.onPointerLockChanged?.((locked)=>{if(!locked&&document.pointerLockElement!==renderer?.domElement)document.exitPointerLock?.()});
+    SDK.ads?.onBreakStart?.(()=>{
+      window.__boxityAdPaused=true;
+      adBreakActive=true;
+      document.querySelectorAll('audio,video').forEach(media=>media.pause());
+      reportGameplayEnd();
+    });
+    SDK.ads?.onBreakEnd?.(()=>{
+      window.__boxityAdPaused=false;
+      adBreakActive=false;
+      reportGameplayStart();
+    });
+    applyReservedAreas(SDK.ui?.reservedAreas?.());
+    SDK.ui?.onReservedAreasChange?.(applyReservedAreas);
   }catch(error){console.warn('Boxity SDK initialization failed',error)}
 }
 
 function reportGameplayStart(){
-  if(gameplayActive)return;
+  if(gameplayActive||adBreakActive)return;
   gameplayActive=true;
   SDK?.game?.gameplayStart?.();
+}
+
+function applyReservedAreas(areas){
+  const top=Math.max(0,...(areas||[]).map(area=>Number(area.top||area.height||0)));
+  document.documentElement.style.setProperty('--boxity-toolbar-height',`${top}px`);
+  document.documentElement.classList.toggle('boxity-toolbar-visible',top>0);
+}
+
+async function showRewardedReward(placement='brainrot-reward'){
+  if(!SDK?.ads?.isAvailable?.())return;
+  const result=await SDK.ads.showRewarded(placement);
+  if(result?.status!=='completed')return;
+  if(result.rewardToken&&SDK.environment?.().apiUrl){
+    const response=await SDK.api?.post?.('/v1/ads/reward/verify',{gameSlug:BOXITY_SLUG,rewardToken:result.rewardToken});
+    if(!response?.valid)return;
+  }
+  money+=5000;
+  save();
+  leaderboardSubmit('wealth',money);
+}
+
+async function purchaseGemShield(){
+  const result=await (SDK?.gems||SDK?.bux)?.requestPurchase?.('instant_shield');
+  if(result?.success){shieldUntil=Date.now()+60000;save();}
+}
+
+async function purchaseGemMultiplier(){
+  const result=await (SDK?.gems||SDK?.bux)?.requestPurchase?.('permanent_multiplier');
+  if(result?.success){rebirth=Math.max(rebirth,1);save();}
+}
+
+async function leaderboardSubmit(board,value){
+  if(SDK?.leaderboard?.submit)await SDK.leaderboard.submit(board,value);
+}
+
+async function reportBoxityStats(){
+  const user=SDK?.auth?.getUser?.();
+  if(!user?.id&&user?.userId)return;
+  await SDK?.api?.post?.('/v1/games/roba-al-brainrot/stats',{
+    money, robberies:slots.length, rebirths:rebirth
+  });
+}
+
+function reportGameScreen(screen){
+  if(!['gameplay','catalog','rebirth'].includes(screen))return;
+  SDK?.ads?.screen?.(screen);
+  SDK?.game?.updateRoom?.(multiplayerRoomId||'');
 }
 function reportGameplayEnd(){
   if(!gameplayActive)return;
@@ -37,11 +123,40 @@ function reportGameplayEnd(){
   SDK?.game?.gameplayEnd?.();
 }
 
+let audioOutput=null;
+function applyBoxityVolume(key,value){
+  const volume=Math.max(0,Math.min(1,(Number(value)||0)/100));
+  if(key==='master_volume')audioOutput=volume;
+  if(audioContext&&audioContext.destination){
+    audioContext.destination.volume=audioOutput===undefined?volume:audioOutput*volume;
+  }
+}
+function applyBoxityGraphics(value){
+  if(!renderer)return;
+  const quality=String(value||'Medium').toLowerCase();
+  renderer.setPixelRatio(Math.min(devicePixelRatio,quality==='low'?1:quality==='high'||quality==='ultra'?2:1.5));
+}
+function showOfficialChatBubble(message){
+  const text=typeof message==='string'?message:String(message?.text||'');
+  if(!text||!player)return;
+  const bubble=label(text,'#fff');
+  bubble.position.y=4.25;
+  player.add(bubble);
+  setTimeout(()=>player?.remove(bubble),(SDK?.chat?.bubbleSeconds||4)*1000);
+}
+function playOfficialEmote(emoteId){
+  if(!emoteId||!player)return;
+  player.rotation.z=.12;
+  setTimeout(()=>{player.rotation.z=0},900);
+}
+
 initializeBoxity();
-SDK?.player?.onRespawnRequest?.(()=>{if(player)player.position.set(18,0,-43)});
+SDK?.player?.onRespawnRequest?.(()=>{
+  if(player){player.position.set(18,0,-43); player.rotation.set(0,0,0);}
+});
 let money=100, rebirth=0, slots=[], players=new Map(), creatures=[], remote=new Map(), carrying=null;
 let selectedBase=null, shieldUntil=0, shieldCooldown=0, jumpVelocity=0, grounded=true;
-let yaw=0,pitch=-.18,started=true,muted=false,batCooldown=0, lastIncomeSecond=-1;
+let yaw=0,pitch=-.18,started=true,muted=false,batCooldown=0,lastIncomeSecond=-1,cameraSensitivity=1;
 const keys={},colliders=[],particles=[];
 let scene,camera,renderer,player,audioContext;
 const clock=new THREE.Clock();
@@ -49,7 +164,15 @@ const bases=[];
 
 class Multiplayer {
  constructor(){this.channel=new BroadcastChannel('brainrot-roba-v1');this.channel.onmessage=e=>this.receive(e.data)}
- async init(){try{SDK?.party?.onStateChange?.(d=>this.receive(d));}catch(e){console.warn(e)} }
+ async init(){try{
+   const launch=await SDK?.party?.getLaunch?.();
+   if(launch){launch.members?.forEach(member=>this.receive({type:'state',id:member.userId,name:member.displayName||member.username}));}
+   SDK?.party?.onStateChange?.(d=>this.receive(d));
+   SDK?.game?.updateRoom?.(launch?.roomKey||crypto.randomUUID());
+   multiplayerRoomId=launch?.roomKey||crypto.randomUUID();
+   SDK?.game?.updateRoom?.(multiplayerRoomId);
+   if(launch?.roomKey)SDK?.party?.joined?.(launch.roomKey);
+ }catch(e){console.warn(e)} }
  send(type,data={}){const p={type,id:localStorage.getItem('brainrot-client-id'),...data,t:Date.now()};this.channel.postMessage(p);SDK?.party?.send?.(p)}
  receive(p){if(!p||p.id===localStorage.getItem('brainrot-client-id'))return;remote.set(p.id,p);if(p.type==='state')updateRemotePlayer(p)}
 }
@@ -66,6 +189,10 @@ function init(){
  SDK?.game?.loadingStep?.('Mapa y escena 3D preparados');
  SDK?.game?.loadingEnd?.();
  reportGameplayStart();
+ SDK?.ads?.declareScreens?.({menu:{},gameplay:{}});
+ setInterval(()=>SDK?.leaderboard?.submit?.('wealth',money),30000);
+ setInterval(reportBoxityStats,30000);
+ reportGameScreen('gameplay');
 }
 function box(x,z,w,d,h,color,collision=true){const mesh=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshStandardMaterial({color,roughness:.72}));mesh.position.set(x,h/2,z);mesh.castShadow=mesh.receiveShadow=true;scene.add(mesh);if(collision)colliders.push(new THREE.Box3().setFromObject(mesh));return mesh}
 function buildMap(){
@@ -100,7 +227,19 @@ function makeBrainrot(data,z=-43){const [name,rank,price,income,color]=data,g=ne
  for(const x of [-.55,.55]){const leg=new THREE.Mesh(new THREE.CapsuleGeometry(.12,.45,4,6),mat);leg.position.set(x,.25,.05);g.add(leg)}const aura=new THREE.Mesh(new THREE.TorusGeometry(.85,.025,6,32),new THREE.MeshBasicMaterial({color:RANK[rank][1]}));aura.rotation.x=Math.PI/2;aura.position.y=.12;g.add(aura);const tag=label(`${name} · ${RANK[rank][0]} · ${moneyFormat(price)} · +${moneyFormat(income)}/s`,RANK[rank][1]);tag.position.y=2.6;g.add(tag);g.position.set((Math.random()-.5)*2.4,0,z);g.userData={data,name,rank,price,income,color};scene.add(g);return g}
 function spawnCreature(initial=false){if(!initial&&creatures.length>3)return;if(!initial&&Math.random()<.88)return spawnCreature();let pool;const r=Math.random();if(r<.06)pool=BRAINROTS.slice(12);else if(r<.18)pool=BRAINROTS.slice(9,12);else if(r<.38)pool=BRAINROTS.slice(6,9);else if(r<.64)pool=BRAINROTS.slice(3,6);else pool=BRAINROTS.slice(0,3);const creature=makeBrainrot(pool[Math.floor(Math.random()*pool.length)],-43);creatures.push(creature);multiplayer.send('spawn',{brainrot:creature.userData.name,position:[creature.position.x,-43]});if(!initial&&creature.userData.rank==='mythic')globalAlert('¡APARICIÓN MÍTICA! '+creature.userData.name)}
 function canMove(position,radius=.75){if(position.x<-53||position.x>53||position.z<-53||position.z>53)return false;const sphere=new THREE.Sphere(position,radius);return !colliders.some(b=>b.intersectsSphere(sphere))}
-function bindEvents(){window.addEventListener('resize',resize);document.addEventListener('mousemove',e=>{if(document.pointerLockElement!==renderer.domElement)return;yaw-=e.movementX*.0024;pitch=Math.max(-.62,Math.min(.32,pitch-e.movementY*.0018))});renderer.domElement.addEventListener('click',()=>renderer.domElement.requestPointerLock());document.addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Escape')SDK?.portal?.reportEscape?.();if(e.code==='Space'){e.preventDefault();if(grounded){jumpVelocity=7.5;grounded=false;sound('jump')}}if(e.code==='KeyE')interact();if(e.code==='KeyR')openRebirth();if(e.code==='Tab'){$('catalog').classList.toggle('hidden');e.preventDefault()}if(e.code==='KeyF'){hit()}});document.addEventListener('keyup',e=>keys[e.code]=false);$('shieldBtn').onclick=toggleShield;$('rebirthBtn').onclick=openRebirth;$('catalogBtn').onclick=()=>$('catalog').classList.toggle('hidden');$('closeRebirth').onclick=()=>$('rebirth').classList.add('hidden');$('soundBtn').onclick=()=>{muted=!muted;$('soundBtn').textContent=muted?'Sonido OFF':'Sonido ON'};document.querySelectorAll('[data-rebirth]').forEach(b=>b.onclick=()=>doRebirth(+b.dataset.rebirth));}
+function bindEvents(){window.addEventListener('resize',resize);document.addEventListener('mousemove',e=>{if(document.pointerLockElement!==renderer.domElement)return;yaw-=e.movementX*.0024*cameraSensitivity;pitch=Math.max(-.62,Math.min(.32,pitch-e.movementY*.0018*cameraSensitivity))});renderer.domElement.addEventListener('click',()=>renderer.domElement.requestPointerLock());document.addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Escape'){e.preventDefault();SDK?.portal?.reportEscape?.();document.exitPointerLock?.()}if(e.code==='Space'){e.preventDefault();if(grounded){jumpVelocity=7.5;grounded=false;sound('jump')}}if(e.code==='KeyE')interact();if(e.code==='KeyR')openRebirth();if(e.code==='Tab'){toggleCatalog();e.preventDefault()}if(e.code==='KeyF'){hit()}});document.addEventListener('keyup',e=>keys[e.code]=false);$('shieldBtn').onclick=toggleShield;$('rebirthBtn').onclick=openRebirth;$('catalogBtn').onclick=toggleCatalog;$('closeRebirth').onclick=()=>{ $('rebirth').classList.add('hidden');reportGameScreen('gameplay')};$('soundBtn').onclick=()=>{muted=!muted;$('soundBtn').textContent=muted?'Sonido OFF':'Sonido ON'};$('gemShieldBtn').onclick=purchaseGemShield;$('gemMultiplierBtn').onclick=purchaseGemMultiplier;$('rewardedAdBtn').onclick=()=>showRewardedReward('brainrot-reward');document.querySelectorAll('[data-rebirth]').forEach(b=>b.onclick=()=>doRebirth(+b.dataset.rebirth));bindTouchControls();}
+function toggleCatalog(){const catalog=$('catalog');catalog.classList.toggle('hidden');reportGameScreen(catalog.classList.contains('hidden')?'gameplay':'catalog')}
+function bindTouchControls(){
+  document.querySelectorAll('[data-touch-key]').forEach(button=>{
+    const code=button.dataset.touchKey;
+    const down=e=>{e.preventDefault();keys[code]=true};
+    const up=e=>{e.preventDefault();keys[code]=false};
+    button.addEventListener('pointerdown',down);
+    button.addEventListener('pointerup',up);
+    button.addEventListener('pointercancel',up);
+    button.addEventListener('pointerleave',up);
+  });
+}
 function resize(){camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)}
 function updateMovement(dt){let forward=(keys.KeyW?1:0)-(keys.KeyS?1:0),right=(keys.KeyD?1:0)-(keys.KeyA?1:0);const length=Math.hypot(forward,right)||1;forward/=length;right/=length;if(forward||right){const sin=Math.sin(yaw),cos=Math.cos(yaw),speed=(carrying?5.4:7.2)*(1+rebirth*.1);const dx=(right*cos+forward*sin)*speed*dt,dz=(right*sin-forward*cos)*speed*dt;const nx=player.position.clone().setX(player.position.x+dx);if(canMove(nx))player.position.x=nx.x;const nz=player.position.clone().setZ(player.position.z+dz);if(canMove(nz))player.position.z=nz.z;const angle=Math.atan2(dx,dz);let diff=((angle-player.rotation.y+Math.PI)%(Math.PI*2))-Math.PI;player.rotation.y+=diff*(1-Math.pow(.001,dt));animateWalk(performance.now()/120)}
  jumpVelocity-=20*dt;player.position.y=Math.max(0,player.position.y+jumpVelocity*dt);if(player.position.y<=0){player.position.y=0;jumpVelocity=0;grounded=true}
@@ -116,7 +255,7 @@ function buy(creature){const data=creature.userData,owner=remote.get(creature.us
 function placeInBase(base,creature){const slot=base.slots.find(s=>!s.occupied);if(!slot)return false;slot.occupied=creature.userData.name;creature.position.copy(slot.p).add(new THREE.Vector3(0,.15,0));base.slots.forEach(s=>{if(s.occupied){} });creatures.splice(creatures.indexOf(creature),1);save();return true}
 function toggleShield(){if(Date.now()<shieldCooldown)return globalAlert('Escudo en enfriamiento');const duration=rebirth>=2?40000:30000;shieldUntil=Date.now()+duration;shieldCooldown=Date.now()+65000;sound('shield');multiplayer.send('shield',{base:selectedBase?.id,until:shieldUntil});save()}
 function steal(){globalAlert('Mantén E sobre un pedestal rival para cargar el Brainrot');}
-function openRebirth(){$('rebirth').classList.toggle('hidden');updateRebirthPanel()}
+function openRebirth(){const modal=$('rebirth');modal.classList.toggle('hidden');reportGameScreen(modal.classList.contains('hidden')?'gameplay':'rebirth');updateRebirthPanel()}
 function updateRebirthPanel(){document.querySelectorAll('[data-rebirth]').forEach(b=>{const level=+b.dataset.rebirth,unlocked=rebirth+1===level;b.classList.toggle('disabled',!unlocked||rebirth>=level);b.querySelector('.status').textContent=rebirth>=level?'COMPLETADO':unlocked?'DISPONIBLE':'BLOQUEADO'})}
 function doRebirth(level){if(level!==rebirth+1||level>3)return;const owned=slots.length,legendary=slots.some(n=>{const d=BRAINROTS.find(x=>x[0]===n);return d&&['legendary','mythic'].includes(d[1])});const req=[money>=50000&&owned>=5,money>=500000&&owned>=8,money>=5000000&&owned>=10&&legendary][level-1];if(!req)return globalAlert('Requisitos incompletos');rebirth=level;money=[250,1000,5000][level-1];slots=[];sound('rebirth');globalAlert(`RENACIMIENTO ${level} COMPLETADO`);openRebirth();save()}
 function moneyFormat(n){return '$'+Math.floor(n).toLocaleString('es-ES')}
@@ -128,6 +267,6 @@ function sound(type){if(muted)return;audioContext||=new (window.AudioContext||wi
 function burst(pos,color){for(let i=0;i<18;i++){const p=new THREE.Mesh(new THREE.BoxGeometry(.1,.1,.1),new THREE.MeshBasicMaterial({color}));p.position.copy(pos).add(new THREE.Vector3(0,1.5,0));scene.add(p);particles.push({mesh:p,life:1,velocity:new THREE.Vector3((Math.random()-.5)*6,Math.random()*5,(Math.random()-.5)*6)})}}
 function globalAlert(text){const el=$('alert');el.textContent=text;el.classList.add('show');clearTimeout(globalAlert.t);globalAlert.t=setTimeout(()=>el.classList.remove('show'),2600)}
 function updateHUD(){const now=Date.now(),shield=Math.max(0,Math.ceil((shieldUntil-now)/1000));$('money').textContent=moneyFormat(money);$('income').textContent=moneyFormat(income())+'/s · x'+[1,1.5,2.5,4][rebirth];$('slots').textContent=slots.length+'/10';$('rebirthLevel').textContent=rebirth+'/3';$('shieldText').textContent=shield?`Escudo: ${shield}s`:Math.max(0,Math.ceil((shieldCooldown-now)/1000))?`Enfriando ${Math.ceil((shieldCooldown-now)/1000)}s`:'Escudo listo';bases[0].shield.visible=shield>0;if(shield>0){bases[0].shield.rotation.y+=.02;bases[0].button.material.color.set('#55eaff')}}
-function animate(){requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.05);updateMovement(dt);updateHUD();for(const c of creatures){c.position.z+=dt*.28;c.rotation.y=Math.sin(performance.now()*0.004)*.08;c.children.forEach(x=>{if(x.geometry?.type==='CapsuleGeometry')x.rotation.z=Math.sin(performance.now*.006)*.12});if(c.position.z>43){scene.remove(c);creatures.splice(creatures.indexOf(c),1)}}if(Math.random()<dt*.7)spawnCreature();const sec=Math.floor(performance.now()/1000);if(sec!==lastIncomeSecond){money+=income();lastIncomeSecond=sec;if(income())sound('coin')}particles.forEach((p,i)=>{p.life-=dt;p.mesh.position.addScaledVector(p.velocity,dt);p.mesh.scale.setScalar(Math.max(.05,p.life));if(p.life<=0){scene.remove(p.mesh);particles.splice(i,1)}});renderer.render(scene,camera)}
+function animate(){requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.05);if(!adBreakActive){updateMovement(dt)}updateHUD();for(const c of creatures){c.position.z+=dt*.28;c.rotation.y=Math.sin(performance.now()*0.004)*.08;c.children.forEach(x=>{if(x.geometry?.type==='CapsuleGeometry')x.rotation.z=Math.sin(performance.now*.006)*.12});if(c.position.z>43){scene.remove(c);creatures.splice(creatures.indexOf(c),1)}}if(Math.random()<dt*.7&&!adBreakActive)spawnCreature();const sec=Math.floor(performance.now()/1000);if(sec!==lastIncomeSecond){money+=income();lastIncomeSecond=sec;if(income())sound('coin')}particles.forEach((p,i)=>{p.life-=dt;p.mesh.position.addScaledVector(p.velocity,dt);p.mesh.scale.setScalar(Math.max(.05,p.life));if(p.life<=0){scene.remove(p.mesh);particles.splice(i,1)}});renderer.render(scene,camera)}
 init();
 window.addEventListener('pagehide',reportGameplayEnd);

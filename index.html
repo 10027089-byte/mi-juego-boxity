@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="es">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Roba un Brainrot</title><link rel="stylesheet" href="styles-pro.css"><script src="https://sdk.bloxity.io/v1/legion-sdk.min.js"></script><script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js"}}</script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Roba un Brainrot</title><link rel="stylesheet" href="styles.css"><script src="https://sdk.bloxity.io/v1/legion-sdk.min.js"></script><script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js"}}</script></head>
 <body><div id="game"></div><div id="hud">
 <div class="brand"><span>ROBA UN</span><strong>BRAINROT</strong></div>
 <div class="stats"><div><small>DINERO</small><b id="money">$100</b></div><div><small>GANANCIAS</small><b id="income">$0/s</b></div><div><small>SLOTS</small><b id="slots">0/10</b></div><div><small>REBIRTH</small><b id="rebirthLevel">0/3</b></div></div>
@@ -8,6 +8,20 @@
 <div class="actions"><button id="shieldBtn">Cerrar base</button><button id="rebirthBtn">Renacer [R]</button><button id="catalogBtn">Catálogo [TAB]</button><button id="soundBtn">Sonido ON</button></div>
 <div class="controls">WASD Mover · Ratón Cámara · Espacio Saltar · E Comprar/Robar · F Golpear</div>
 <div id="interaction"></div><div id="alert"></div>
+</div>
+<div class="touch-controls" aria-label="Controles táctiles">
+  <div class="touch-pad">
+    <button data-touch-key="KeyW" aria-label="Mover adelante">▲</button>
+    <button data-touch-key="KeyA" aria-label="Mover izquierda">◀</button>
+    <button data-touch-key="KeyS" aria-label="Mover atrás">▼</button>
+    <button data-touch-key="KeyD" aria-label="Mover derecha">▶</button>
+  </div>
+  <button class="touch-action" data-touch-key="Space" aria-label="Saltar">SALTAR</button>
+</div>
+<div class="boxity-actions" aria-label="Compras y recompensas">
+  <button id="gemShieldBtn">Escudo · Gems</button>
+  <button id="gemMultiplierBtn">x2 · Gems</button>
+  <button id="rewardedAdBtn">+$5,000</button>
 </div>
 <section id="catalog" class="hidden"></section>
 <section id="rebirth" class="modal hidden"><div class="modal-panel"><button id="closeRebirth" class="close">×</button><p>PROGRESIÓN PERMANENTE</p><h2>Renacimiento</h2>

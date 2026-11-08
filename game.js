@@ -26,6 +26,20 @@ class BoxitySDK {
       this.sdk?.avatar?.onAvatarChanged?.(()=>this.loadPlayerAvatar());
       this.sdk?.onEnvironmentChanged?.((environment)=>console.info('Boxity environment',environment));
       console.info('Boxity environment',this.sdk?.environment?.());
+      this.sdk?.game?.registerFeature?.('avatar');
+      this.sdk?.game?.registerFeature?.('chat');
+      this.sdk?.game?.registerFeature?.('emotes');
+      this.sdk?.game?.registerFeature?.('settings');
+      this.sdk?.game?.registerFeature?.('party');
+      this.sdk?.game?.registerFeature?.('leaderboard');
+      this.sdk?.party?.enable?.({maxPartySize:8});
+      this.sdk?.game?.loadingStep?.('Escena 3D preparada');
+      this.sdk?.game?.loadingEnd?.();
+      this.sdk?.game?.gameplayStart?.();
+      document.addEventListener('keydown',(event)=>{
+        if(event.code==='Escape')this.sdk?.portal?.reportEscape?.();
+      });
+      window.addEventListener('pagehide',()=>this.sdk?.game?.gameplayEnd?.());
     } catch(e) { console.info('Boxity SDK initialization failed',e); }
     localStorage.setItem('boxity-session',JSON.stringify({game:'Roba un Brainrot',startedAt:Date.now()}));
   }

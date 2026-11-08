@@ -1,0 +1,5 @@
+---
+clientDir: "."
+buildCommand: ""
+distDir: "."
+---
