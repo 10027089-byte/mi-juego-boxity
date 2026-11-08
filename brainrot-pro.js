@@ -4,10 +4,15 @@ import { GLTFLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders
 const $=(id)=>document.getElementById(id);
 const RANK={common:['Gris','#9aa0aa'],rare:['Azul','#4e9cff'],epic:['Morado','#b95cff'],legendary:['Dorado','#ffc928'],mythic:['Mítico','#ff356b']};
 const BRAINROTS=[
- ['Tralalero Tralala','common',120,10,'#55c95a'],['Brr Brr Patapim','common',180,15,'#8d704c'],['Frigo Camelo','common',250,20,'#cf9d66'],['Lirili Larila','rare',600,50,'#ffd36b'],['Chimpanzini Bananini','rare',1300,130,'#f3dc42'],['Bombardiro Crocodilo','rare',2000,180,'#51ad65'],['Cappucino Assassino','epic',4000,350,'#79543f'],['Tung Tung Sahur','epic',8000,650,'#bd6831'],['Ballerina Cappucina','epic',12000,1000,'#ef87bd'],['La Vaca Saturno Saturnita','legendary',25000,2200,'#df83b5'],['Trulimero Trulicina','legendary',50000,4000,'#68a6ff'],['Girafa Celeste','legendary',80000,7000,'#81d7dd'],['Los Tralaleritos','mythic',200000,18000,'#ef4b4b'],['Matteo Supremo','mythic',450000,42000,'#ffad33'],['Brainrot Cósmico','mythic',800000,90000,'#c54cff']
+ ['Tralalero Tralala','common',120,10,'#55c95a'],['Brr Brr Patapim','common',180,15,'#8d704c'],['Frigo Camelo','common',250,20,'#cf9d66'],['Bobrito Bandito','common',300,25,'#b48657'],
+ ['Lirili Larila','rare',700,60,'#ffd36b'],['Chimpanzini Bananini','rare',1300,130,'#f3dc42'],['Bombardiro Crocodilo','rare',2000,180,'#51ad65'],['Tung Tung Sahur','rare',2500,220,'#bd6831'],
+ ['Cappucino Assassino','epic',5000,450,'#79543f'],['Ballerina Cappucina','epic',9000,850,'#ef87bd'],['Boneca Ambalabu','epic',12000,1100,'#73d8d0'],['Ta Ta Ta Sahur','epic',15000,1400,'#dc7a38'],
+ ['La Vaca Saturno Saturnita','legendary',35000,3200,'#df83b5'],['Trulimero Trulicina','legendary',60000,5000,'#68a6ff'],['Girafa Celeste','legendary',80000,7000,'#81d7dd'],['Trippi Troppi','legendary',100000,9500,'#f4a84b'],
+ ['Los Tralaleritos','mythic',250000,25000,'#ef4b4b'],['Matteo Supremo','mythic',450000,42000,'#ffad33'],['Brainrot Cósmico','mythic',800000,90000,'#c54cff'],['Dios del Brainrot','mythic',1500000,150000,'#ff356b']
 ];
+const BOXITY_GAME_NAME='Roba un Brainrot';
 const SDK=window.Legion?.SDK||null;
-const BOXITY_SLUG='roba-al-brainrot';
+const BOXITY_SLUG='roba-un-brainrot';
 let gameplayActive=false, multiplayerRoomId='';
 let adBreakActive=false;
 
@@ -15,7 +20,7 @@ function initializeBoxity(){
   if(!SDK||window.__boxityInitialized)return;
   window.__boxityInitialized=true;
   try{
-    SDK.init({gameSlug:BOXITY_SLUG,gameName:'Roba al Brainrot',version:'2.0.0'});
+    SDK.init({gameSlug:BOXITY_SLUG,gameName:BOXITY_GAME_NAME,version:'2.0.0'});
     SDK.auth?.onUserChanged?.((user)=>{
       localStorage.setItem('boxity-user-name',user?.username||user?.displayName||'Jugador');
       document.querySelector('.brand')?.setAttribute('title',user?.username?`@${user.username}`:'');
@@ -107,7 +112,7 @@ async function leaderboardSubmit(board,value){
 async function reportBoxityStats(){
   const user=SDK?.auth?.getUser?.();
   if(!user?.id&&user?.userId)return;
-  await SDK?.api?.post?.('/v1/games/roba-al-brainrot/stats',{
+  await SDK?.api?.post?.('/v1/games/roba-un-brainrot/stats',{
     money, robberies:slots.length, rebirths:rebirth
   });
 }
@@ -192,17 +197,23 @@ function init(){
  SDK?.ads?.declareScreens?.({menu:{},gameplay:{}});
  setInterval(()=>SDK?.leaderboard?.submit?.('wealth',money),30000);
  setInterval(reportBoxityStats,30000);
+ setInterval(startPasarelaEvent,180000);
  reportGameScreen('gameplay');
 }
 function box(x,z,w,d,h,color,collision=true){const mesh=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshStandardMaterial({color,roughness:.72}));mesh.position.set(x,h/2,z);mesh.castShadow=mesh.receiveShadow=true;scene.add(mesh);if(collision)colliders.push(new THREE.Box3().setFromObject(mesh));return mesh}
 function buildMap(){
- box(0,0,110,.8,.25,'#5da94c',true);box(0,0,110,110,.1,'#75bd58',false);box(0,0,15,86,.35,'#d7d2c7',true);
- for(let i=-38;i<=38;i+=10){box(0,i,.14,.14,.02,'#fff4b2',false)}
+ box(0,0,110,.8,.25,'#5da94c',true);box(0,0,110,110,.1,'#75bd58',false);
+ box(0,0,15,86,.35,'#e43d4f',true);
+ box(0,0,13,86,.45,'#6d2b24',true);
+ for(let i=-38;i<=38;i+=8){const arrow=box(0,i,2,4,.03,'#fff4b2',false);arrow.rotation.y=Math.PI/4}
+ const neonGeo=new THREE.BoxGeometry(.18,.18,86);
+ for(const x of [-7.7,7.7]){const neon=new THREE.Mesh(neonGeo,new THREE.MeshStandardMaterial({color:'#ff3bdb',emissive:'#ff3bdb',emissiveIntensity:3}));neon.position.set(x,.48,0);scene.add(neon)}
  for(let z=-38;z<=38;z+=9){box(-55,z,2,2,3,'#46673d');box(55,z,2,2,3,'#46673d')}
  for(const z of [-43,-25,25,43])for(const x of [-42,42])tree(x,z);
  for(let z=-34;z<=34;z+=17){box(-22,z,10,12,.25,'#c5c3b9',false);box(22,z,10,12,.25,'#c5c3b9',false)}
  for(let i=-42;i<=42;i+=14)lamppost(i,-48);
- const portalGeo=new THREE.TorusGeometry(5.4,.45,12,40);for(const z of [-45,45]){const p=new THREE.Mesh(portalGeo,new THREE.MeshStandardMaterial({color:'#ff355f',emissive:'#ff355f',emissiveIntensity:2}));p.position.set(0,5.5,z);p.rotation.y=Math.PI/2;scene.add(p)}
+ const portalGeo=new THREE.TorusGeometry(5.4,.45,12,40);
+ for(const [z,color] of [[-45,'#ff355f'],[45,'#63e8ff']]){const portal=new THREE.Mesh(portalGeo,new THREE.MeshStandardMaterial({color,emissive:color,emissiveIntensity:3}));portal.position.set(0,5.8,z);scene.add(portal)}
 }
 function tree(x,z){const trunk=new THREE.Mesh(new THREE.CylinderGeometry(.4,.55,2.8,7),new THREE.MeshStandardMaterial({color:'#79503a'}));trunk.position.set(x,1.4,z);scene.add(trunk);const crown=new THREE.Mesh(new THREE.ConeGeometry(2.4,5,7),new THREE.MeshStandardMaterial({color:'#3b9b50',roughness:.9}));crown.position.set(x,4,z);scene.add(crown)}
 function lamppost(x,z){const pole=new THREE.Mesh(new THREE.CylinderGeometry(.09,.09,4,8),new THREE.MeshStandardMaterial({color:'#293441'}));pole.position.set(x,2,z);scene.add(pole);const bulb=new THREE.Mesh(new THREE.SphereGeometry(.28,12,8),new THREE.MeshStandardMaterial({color:'#fff3a4',emissive:'#fff19a',emissiveIntensity:2}));bulb.position.set(x,4,z);scene.add(bulb)}
@@ -225,7 +236,22 @@ async function loadAvatar(){try{const character=await SDK?.avatar?.getCharacter?
 function makeBrainrot(data,z=-43){const [name,rank,price,income,color]=data,g=new THREE.Group(),mat=new THREE.MeshStandardMaterial({color,roughness:.45,emissive:RANK[rank][1],emissiveIntensity:rank==='mythic'?.3:.08});const body=new THREE.Mesh(new THREE.SphereGeometry(.65,16,10),mat);body.scale.set(1.15,.85,1);body.position.y=.8;g.add(body);const head=new THREE.Mesh(new THREE.SphereGeometry(.48,14,10),mat);head.position.set(0,1.45,.2);g.add(head);
  [-.18,.18].forEach(x=>{const eye=new THREE.Mesh(new THREE.SphereGeometry(.1,10,8),new THREE.MeshBasicMaterial({color:'#fff'}));eye.position.set(x,1.5,.62);g.add(eye);const pupil=new THREE.Mesh(new THREE.SphereGeometry(.035,8,6),new THREE.MeshBasicMaterial({color:'#111'}));pupil.position.set(x,1.5,.71);g.add(pupil)});
  for(const x of [-.55,.55]){const leg=new THREE.Mesh(new THREE.CapsuleGeometry(.12,.45,4,6),mat);leg.position.set(x,.25,.05);g.add(leg)}const aura=new THREE.Mesh(new THREE.TorusGeometry(.85,.025,6,32),new THREE.MeshBasicMaterial({color:RANK[rank][1]}));aura.rotation.x=Math.PI/2;aura.position.y=.12;g.add(aura);const tag=label(`${name} · ${RANK[rank][0]} · ${moneyFormat(price)} · +${moneyFormat(income)}/s`,RANK[rank][1]);tag.position.y=2.6;g.add(tag);g.position.set((Math.random()-.5)*2.4,0,z);g.userData={data,name,rank,price,income,color};scene.add(g);return g}
-function spawnCreature(initial=false){if(!initial&&creatures.length>3)return;if(!initial&&Math.random()<.88)return spawnCreature();let pool;const r=Math.random();if(r<.06)pool=BRAINROTS.slice(12);else if(r<.18)pool=BRAINROTS.slice(9,12);else if(r<.38)pool=BRAINROTS.slice(6,9);else if(r<.64)pool=BRAINROTS.slice(3,6);else pool=BRAINROTS.slice(0,3);const creature=makeBrainrot(pool[Math.floor(Math.random()*pool.length)],-43);creatures.push(creature);multiplayer.send('spawn',{brainrot:creature.userData.name,position:[creature.position.x,-43]});if(!initial&&creature.userData.rank==='mythic')globalAlert('¡APARICIÓN MÍTICA! '+creature.userData.name)}
+function spawnCreature(initial=false){
+ if(!initial&&creatures.length>4)return;
+ const boosted=window.__pasarelaEventBoost||1;
+ const r=Math.random()/boosted;
+ const pool=r<.045?BRAINROTS.slice(16):r<.16?BRAINROTS.slice(12,16):r<.34?BRAINROTS.slice(8,12):r<.62?BRAINROTS.slice(4,8):BRAINROTS.slice(0,4);
+ const creature=makeBrainrot(pool[Math.floor(Math.random()*pool.length)],-43);
+ creatures.push(creature);
+ multiplayer.send('spawn',{brainrot:creature.userData.name,position:[creature.position.x,-43]});
+ if(creature.userData.rank==='mythic')globalAlert(`¡APARICIÓN MÍTICA! ${creature.userData.name}`);
+}
+function startPasarelaEvent(){
+ globalAlert('¡LLUVIA DE RAREZAS! Próximos Brainrots épicos y superiores');
+ window.__pasarelaEventBoost=2.5;
+ sound('rebirth');
+ setTimeout(()=>{window.__pasarelaEventBoost=1;globalAlert('¡HORA DORADA x2! Ganancias y rareza aumentadas')},45000);
+}
 function canMove(position,radius=.75){if(position.x<-53||position.x>53||position.z<-53||position.z>53)return false;const sphere=new THREE.Sphere(position,radius);return !colliders.some(b=>b.intersectsSphere(sphere))}
 function bindEvents(){window.addEventListener('resize',resize);document.addEventListener('mousemove',e=>{if(document.pointerLockElement!==renderer.domElement)return;yaw-=e.movementX*.0024*cameraSensitivity;pitch=Math.max(-.62,Math.min(.32,pitch-e.movementY*.0018*cameraSensitivity))});renderer.domElement.addEventListener('click',()=>renderer.domElement.requestPointerLock());document.addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Escape'){e.preventDefault();SDK?.portal?.reportEscape?.();document.exitPointerLock?.()}if(e.code==='Space'){e.preventDefault();if(grounded){jumpVelocity=7.5;grounded=false;sound('jump')}}if(e.code==='KeyE')interact();if(e.code==='KeyR')openRebirth();if(e.code==='Tab'){toggleCatalog();e.preventDefault()}if(e.code==='KeyF'){hit()}});document.addEventListener('keyup',e=>keys[e.code]=false);$('shieldBtn').onclick=toggleShield;$('rebirthBtn').onclick=openRebirth;$('catalogBtn').onclick=toggleCatalog;$('closeRebirth').onclick=()=>{ $('rebirth').classList.add('hidden');reportGameScreen('gameplay')};$('soundBtn').onclick=()=>{muted=!muted;$('soundBtn').textContent=muted?'Sonido OFF':'Sonido ON'};$('gemShieldBtn').onclick=purchaseGemShield;$('gemMultiplierBtn').onclick=purchaseGemMultiplier;$('rewardedAdBtn').onclick=()=>showRewardedReward('brainrot-reward');document.querySelectorAll('[data-rebirth]').forEach(b=>b.onclick=()=>doRebirth(+b.dataset.rebirth));bindTouchControls();}
 function toggleCatalog(){const catalog=$('catalog');catalog.classList.toggle('hidden');reportGameScreen(catalog.classList.contains('hidden')?'gameplay':'catalog')}

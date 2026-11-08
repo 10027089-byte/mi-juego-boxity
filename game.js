@@ -21,7 +21,7 @@ class BoxitySDK {
     try {
       if(window.__boxityInitialized)return;
       window.__boxityInitialized=true;
-      await this.sdk?.init({gameSlug:'roba-al-brainrot',gameName:'Roba al Brainrot',version:'1.0.0'});
+      await this.sdk?.init({gameSlug:'roba-un-brainrot',gameName:'Roba un Brainrot',version:'1.0.0'});
       this.sdk?.auth?.onUserChanged?.((user)=>localStorage.setItem('boxity-user-name',user?.username||user?.displayName||'Jugador'));
       this.sdk?.avatar?.onAvatarChanged?.(()=>this.loadPlayerAvatar());
       this.sdk?.onEnvironmentChanged?.((environment)=>console.info('Boxity environment',environment));
