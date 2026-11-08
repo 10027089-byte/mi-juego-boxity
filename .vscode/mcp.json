@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "boxity": {
+      "type": "http",
+    "url": "https://mcp.bloxity.io/mcp",
+      "headers": {
+        "Authorization":  "Bearer bmcp_y6NA7TIFf1BuCzqupQZk8tJQttfEA94DfpLeEf60wC4"
+      }
+    }
+  }
+}
