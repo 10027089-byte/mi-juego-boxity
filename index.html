@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="es">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Roba un Brainrot</title><link rel="stylesheet" href="styles-pro.css"><script src="https://sdk.bloxity.io/v1/legion-sdk.min.js"></script><script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js"}}</script></head>
+<body><div id="game"></div><div id="hud">
+<div class="brand"><span>ROBA UN</span><strong>BRAINROT</strong></div>
+<div class="stats"><div><small>DINERO</small><b id="money">$100</b></div><div><small>GANANCIAS</small><b id="income">$0/s</b></div><div><small>SLOTS</small><b id="slots">0/10</b></div><div><small>REBIRTH</small><b id="rebirthLevel">0/3</b></div></div>
+<div class="shield"><small>BASE</small><b id="shieldText">Escudo inicial: 30s</b></div>
+<div class="actions"><button id="shieldBtn">Cerrar base</button><button id="rebirthBtn">Renacer [R]</button><button id="catalogBtn">Catálogo [TAB]</button><button id="soundBtn">Sonido ON</button></div>
+<div class="controls">WASD Mover · Ratón Cámara · Espacio Saltar · E Comprar/Robar · F Golpear</div>
+<div id="interaction"></div><div id="alert"></div>
+</div>
+<section id="catalog" class="hidden"></section>
+<section id="rebirth" class="modal hidden"><div class="modal-panel"><button id="closeRebirth" class="close">×</button><p>PROGRESIÓN PERMANENTE</p><h2>Renacimiento</h2>
+<article><h3>Renacimiento 1</h3><div>$50,000 · 5 Brainrots</div><ul><li>Dinero reiniciado: $250</li><li>Multiplicador x1.5</li><li>+10% velocidad · Bate de hierro</li></ul><button data-rebirth="1"><span class="status">BLOQUEADO</span> Renacer</button></article>
+<article><h3>Renacimiento 2</h3><div>$500,000 · 8 Brainrots</div><ul><li>Dinero reiniciado: $1,000</li><li>Multiplicador x2.5</li><li>Escudo 40s · Aura dorada</li></ul><button data-rebirth="2"><span class="status">BLOQUEADO</span> Renacer</button></article>
+<article><h3>Maestro Brainrot</h3><div>$5,000,000 · 10 Brainrots · Legendario/Mítico</div><ul><li>Dinero reiniciado: $5,000</li><li>Multiplicador x4.0</li><li>Bate diamante · Corona exclusiva</li></ul><button data-rebirth="3"><span class="status">BLOQUEADO</span> Renacer</button></article></div></section>
+<script type="module" src="brainrot-pro.js"></script></body></html>
