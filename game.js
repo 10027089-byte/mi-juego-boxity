@@ -21,6 +21,8 @@ const colliders = [];
 const joystick = { x: 0, y: 0 };
 const multiplayer = new BroadcastChannel('roba-un-brainrot-v2');
 let boxityAvatarProfile = null;
+let incomeBoostUntil = 0;
+let boxityEnvironment = null;
 
 function loadState() {
   try {
@@ -35,11 +37,15 @@ function save() {
   SDK?.storage?.set?.(saveKey, state);
   SDK?.data?.save?.(state);
   SDK?.leaderboard?.submit?.('wealth', state.money);
+  SDK?.stats?.increment?.('brainrot_investment', income());
+  SDK?.leaderboards?.submit?.('wealth', state.money);
+  SDK?.leaderboard?.submit?.('money', state.money);
 }
 
 function initializeBoxity() {
   if (!SDK || window.__brainrotSdkInitialized) return;
   window.__brainrotSdkInitialized = true;
+  boxityEnvironment = SDK.getEnvironment?.() || SDK.portal?.getEnvironment?.() || SDK.environment?.get?.() || null;
   SDK.auth?.onUserChanged?.((user) => {
     localStorage.setItem('boxity-user-name', user?.username || user?.displayName || 'Jugador');
     loadRealAvatar();
@@ -50,6 +56,21 @@ function initializeBoxity() {
   SDK.player?.onEvent?.((event) => {
     if (event === 'play_emote') animateEmote();
   });
+  SDK.avatar?.playEmote?.({ wheel: true });
+  SDK.emotes?.enableWheel?.();
+  SDK.party?.enableInvite?.();
+  SDK.party?.enableInvites?.();
+  SDK.chat?.enableBubbles?.({ enabled: true });
+  SDK.matchmaking?.join?.({ gameSlug: GAME_SLUG });
+  SDK.matchmaker?.join?.({ gameSlug: GAME_SLUG });
+  SDK.portal?.onPointerLock?.((locked) => syncPointerLockWithPortal(locked));
+  SDK.portal?.onMenu?.((open) => syncPortalMenu(open));
+  SDK.player?.onReset?.(() => resetCharacter());
+  SDK.game?.onResetCharacter?.(() => resetCharacter());
+  SDK.settings?.listen?.('master_volume', (value) => applyMasterVolume(value));
+  SDK.settings?.listen?.('music_volume', (value) => applyMusicVolume(value));
+  SDK.settings?.listen?.('graphics_quality', (value) => setGraphicsQuality(value));
+  SDK.settings?.listen?.('camera_sensitivity', (value) => cameraSensitivity = Number(value) || cameraSensitivity);
   const settings = {
     master_volume: () => {},
     music_volume: () => {},
@@ -57,6 +78,8 @@ function initializeBoxity() {
     camera_sensitivity: (value) => { cameraSensitivity = Number(value) || 1; }
   };
   Object.entries(settings).forEach(([key, listener]) => SDK.settings?.listen?.(key, listener));
+  SDK.game?.loadingStep?.('Boxity environment detected');
+  SDK.game?.loadingEnd?.('Roba un Brainrot 3D listo');
   SDK.game?.loadingStep?.('Arena y jugadores preparados');
   try {
     SDK.init({
@@ -67,6 +90,41 @@ function initializeBoxity() {
   } catch (error) {
     console.info('Inicializacion Boxity pendiente:', error?.message || 'SDK no disponible');
   }
+}
+
+function syncPointerLockWithPortal(locked) {
+  if (!locked && document.pointerLockElement === renderer?.domElement) document.exitPointerLock?.();
+}
+
+function syncPortalMenu(open) {
+  if (!open) return;
+  document.exitPointerLock?.();
+}
+
+function applyMasterVolume(value) {
+  if (audio) audio.masterGain?.gain?.setValueAtTime?.(Number(value) || 0, audio.currentTime);
+}
+
+function applyMusicVolume(value) {
+  document.documentElement.style.setProperty('--boxity-music-volume', String(value ?? 1));
+}
+
+function setGraphicsQuality(value) {
+  renderer?.setPixelRatio?.(Math.min(devicePixelRatio, value === 'low' ? 1 : value === 'high' ? 2 : 1.5));
+}
+
+function resetCharacter() {
+  player?.position?.set(0, 0, 10);
+  stunnedUntil = 0;
+  carrying = null;
+  notify('Personaje reiniciado por Boxity');
+}
+
+function showDeathScreen(cause = 'golpe de rival') {
+  SDK?.player?.announceDeath?.(cause);
+  SDK?.portal?.showDeathScreen?.({ title: 'El personaje fue eliminado', reason: cause, respawn: resetCharacter });
+  notify(`Eliminado: ${cause}`);
+  resetCharacter();
 }
 
 function boxitySdkAssetApi() {
@@ -406,6 +464,10 @@ function setupMultiplayer() {
   };
   const room = SDK?.party?.getLaunch?.()?.roomKey || 'brainrot-public-room';
   SDK?.game?.updateRoom?.(room);
+  SDK?.matchmaking?.reportRoom?.(room);
+  SDK?.matchmaker?.reportRoom?.(room);
+  SDK?.party?.joinRoom?.(room);
+  SDK?.game?.setPartyRoom?.(room);
   multiplayer.postMessage({ type: 'state', client: clientId(), name: currentUser(), x: player.position.x, y: player.position.y, z: player.position.z });
 }
 
@@ -452,6 +514,29 @@ function currentUser() {
   return user?.username || user?.displayName || user?.user?.username || localStorage.getItem('boxity-user-name') || 'Jugador Boxity';
 }
 
+async function buyVipWithGems() {
+  const result = await (SDK?.economy?.purchase?.({ currency: 'gems', amount: 25, item: 'vip-pass' }) ||
+    SDK?.commerce?.purchaseWithGems?.({ amount: 25, item: 'vip-pass' }) ||
+    Promise.resolve({ approved: false }));
+  if (!result?.approved) return notify('Compra VIP no aprobada por Boxity');
+  state.shieldBonus = Math.max(state.shieldBonus, 10);
+  state.vip = true;
+  save();
+  notify('Pase VIP activado con Gems');
+}
+
+async function activateIncomeAd() {
+  document.documentElement.classList.add('boxity-ad-paused');
+  const rewarded = await (SDK?.ads?.showRewarded?.({ placement: 'double-income-2m' }) ||
+    SDK?.monetization?.showRewardedAd?.({ placement: 'double-income-2m' }) ||
+    Promise.resolve({ verified: false }));
+  document.documentElement.classList.remove('boxity-ad-paused');
+  if (!rewarded?.verified) return notify('Anuncio no verificado por Boxity');
+  incomeBoostUntil = Date.now() + 120000;
+  notify('Ingresos x2 por 2 minutos');
+  save();
+}
+
 function bindEvents() {
   document.getElementById('shopButton').onclick = () => togglePanel('shop');
   document.getElementById('rebirthButton').onclick = () => togglePanel('rebirth');
@@ -459,11 +544,23 @@ function bindEvents() {
   document.querySelectorAll('[data-close]').forEach((button) => button.onclick = () => togglePanel(button.dataset.close, false));
   document.querySelectorAll('[data-shop]').forEach((button) => button.onclick = () => buyUpgrade(button.dataset.shop));
   document.querySelectorAll('[data-rebirth]').forEach((button) => button.onclick = () => rebirth(+button.dataset.rebirth));
+  document.getElementById('laserShieldButton').onclick = toggleShield;
+  document.getElementById('boxityGemsButton').onclick = buyVipWithGems;
+  document.getElementById('boxityAdButton').onclick = activateIncomeAd;
   document.addEventListener('keydown', (event) => {
     keys[event.code] = true;
     if (event.code === 'KeyE') interact();
     if (event.code === 'KeyR') togglePanel('rebirth');
-    if (event.code === 'Escape') SDK?.portal?.reportEscape?.();
+    if (event.code === 'Escape') {
+      document.exitPointerLock?.();
+      SDK?.portal?.openMenu?.();
+      SDK?.portal?.showMenu?.();
+      SDK?.portal?.reportEscape?.();
+    }
+
+  });
+  document.addEventListener('pointerlockchange', () => {
+    SDK?.portal?.setPointerLock?.(Boolean(document.pointerLockElement));
   });
   document.addEventListener('keyup', (event) => keys[event.code] = false);
   document.addEventListener('mousemove', (event) => {
@@ -716,7 +813,10 @@ function renderRebirth() {
 function togglePanel(id, visible = undefined) {
   const panel = document.getElementById(id);
   if (!panel) return;
-  panel.classList.toggle('hidden', visible === undefined ? !panel.classList.contains('hidden') : !visible);
+  const nextVisible = visible === undefined ? panel.classList.contains('hidden') : visible;
+  panel.classList.toggle('hidden', !nextVisible);
+  if (nextVisible) SDK?.game?.reportUI?.(id === 'rebirth' ? 'Rebirth' : id === 'shop' ? 'Shop' : id);
+  if (nextVisible) SDK?.stats?.increment?.('ui_opened', 1, { screen: id });
 }
 
 function showLeaderboard() {
@@ -766,7 +866,8 @@ function updateConveyor(dt) {
 
 function income() {
   const multiplier = [1, 1.5, 2, 3][state.rebirth] || 1;
-  return state.slots.reduce((total, id) => total + (BRAINROTS.find((brainrot) => brainrot.id === id)?.income || 0), 0) * multiplier;
+  const boost = Date.now() < incomeBoostUntil ? 2 : 1;
+  return state.slots.reduce((total, id) => total + (BRAINROTS.find((brainrot) => brainrot.id === id)?.income || 0), 0) * multiplier * boost;
 }
 
 function updateHUD() {

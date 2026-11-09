@@ -6,6 +6,12 @@ export const RARITIES = {
   mythical: { name: 'Mitico', color: '#ff4d8d', particles: 18 }
 };
 
+export const MUTATIONS = {
+  normal: { name: 'Normal', incomeMultiplier: 1 },
+  gold: { name: 'Dorado', incomeMultiplier: 2 },
+  rainbow: { name: 'Arcoiris', incomeMultiplier: 5 }
+};
+
 export const BRAINROTS = [
   { id: 'skibidi-cube', name: 'Skibidi Cubo', rarity: 'common', price: 80, income: 8, color: '#54a9ff', shape: 'cube' },
   { id: 'sigma-rooster', name: 'Sigma Gallo', rarity: 'common', price: 150, income: 12, color: '#ffcf54', shape: 'bird' },

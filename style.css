@@ -1,5 +1,8 @@
 :root{--ink:#101827;--panel:#141d2ee8;--yellow:#ffe347;--cyan:#58e8ff;--pink:#ff5aa7}
 *{box-sizing:border-box}html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#8cd9ff;font-family:Arial,sans-serif;color:#fff}
+.topbar{top:64px!important}
+.laser-shield-button{position:absolute;right:18px;bottom:18px;z-index:12;border:2px solid #76efff;border-radius:12px;background:#123b65;color:#fff;font-weight:900;padding:14px 18px;pointer-events:auto}
+.boxity-ad-paused #game canvas{filter:saturate(.35)}
 #game,#game canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 #hud{position:absolute;inset:0;pointer-events:none}.topbar{position:absolute;left:14px;right:14px;top:14px;height:66px;display:flex;align-items:center;gap:16px}
 .brand{width:190px;display:flex;flex-direction:column;font-weight:900;line-height:.82;text-shadow:0 3px 0 #18233b}.brand span{font-size:13px}.brand strong{font-size:25px;color:var(--yellow)}
