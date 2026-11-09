@@ -1,31 +1,55 @@
 <!doctype html>
 <html lang="es">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Roba un Brainrot</title><link rel="stylesheet" href="styles.css"><script src="https://sdk.bloxity.io/v1/legion-sdk.min.js"></script><script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js"}}</script></head>
-<body><div id="game"></div><div id="hud">
-<div class="brand"><span>ROBA UN</span><strong>BRAINROT</strong></div>
-<div class="stats"><div><small>DINERO</small><b id="money">$100</b></div><div><small>GANANCIAS</small><b id="income">$0/s</b></div><div><small>SLOTS</small><b id="slots">0/10</b></div><div><small>REBIRTH</small><b id="rebirthLevel">0/3</b></div></div>
-<div class="shield"><small>BASE</small><b id="shieldText">Escudo inicial: 30s</b></div>
-<div class="actions"><button id="shieldBtn">Cerrar base</button><button id="rebirthBtn">Renacer [R]</button><button id="catalogBtn">Catálogo [TAB]</button><button id="soundBtn">Sonido ON</button></div>
-<div class="controls">WASD Mover · Ratón Cámara · Espacio Saltar · E Comprar/Robar · F Golpear</div>
-<div id="interaction"></div><div id="alert"></div>
-</div>
-<div class="touch-controls" aria-label="Controles táctiles">
-  <div class="touch-pad">
-    <button data-touch-key="KeyW" aria-label="Mover adelante">▲</button>
-    <button data-touch-key="KeyA" aria-label="Mover izquierda">◀</button>
-    <button data-touch-key="KeyS" aria-label="Mover atrás">▼</button>
-    <button data-touch-key="KeyD" aria-label="Mover derecha">▶</button>
-  </div>
-  <button class="touch-action" data-touch-key="Space" aria-label="Saltar">SALTAR</button>
-</div>
-<div class="boxity-actions" aria-label="Compras y recompensas">
-  <button id="gemShieldBtn">Escudo · Gems</button>
-  <button id="gemMultiplierBtn">x2 · Gems</button>
-  <button id="rewardedAdBtn">+$5,000</button>
-</div>
-<section id="catalog" class="hidden"></section>
-<section id="rebirth" class="modal hidden"><div class="modal-panel"><button id="closeRebirth" class="close">×</button><p>PROGRESIÓN PERMANENTE</p><h2>Renacimiento</h2>
-<article><h3>Renacimiento 1</h3><div>$50,000 · 5 Brainrots</div><ul><li>Dinero reiniciado: $250</li><li>Multiplicador x1.5</li><li>+10% velocidad · Bate de hierro</li></ul><button data-rebirth="1"><span class="status">BLOQUEADO</span> Renacer</button></article>
-<article><h3>Renacimiento 2</h3><div>$500,000 · 8 Brainrots</div><ul><li>Dinero reiniciado: $1,000</li><li>Multiplicador x2.5</li><li>Escudo 40s · Aura dorada</li></ul><button data-rebirth="2"><span class="status">BLOQUEADO</span> Renacer</button></article>
-<article><h3>Maestro Brainrot</h3><div>$5,000,000 · 10 Brainrots · Legendario/Mítico</div><ul><li>Dinero reiniciado: $5,000</li><li>Multiplicador x4.0</li><li>Bate diamante · Corona exclusiva</li></ul><button data-rebirth="3"><span class="status">BLOQUEADO</span> Renacer</button></article></div></section>
-<script type="module" src="brainrot-pro.js"></script></body></html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>Roba un Brainrot 3D</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://sdk.bloxity.io/v1/legion-sdk.min.js"></script>
+  <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js"}}</script>
+</head>
+<body>
+  <div id="game"></div>
+  <main id="hud">
+    <section class="topbar">
+      <div class="brand"><span>ROBA UN</span><strong>BRAINROT 3D</strong></div>
+      <div class="stats">
+        <div><small>DINERO</small><b id="money">$100</b></div>
+        <div><small>GANANCIAS</small><b id="income">$0/s</b></div>
+        <div><small>BASE</small><b id="slots">0/8</b></div>
+      </div>
+      <div class="actions">
+        <button id="shopButton">TIENDA</button>
+        <button id="rebirthButton">RENA CER</button>
+        <button id="leaderboardButton">RANKING</button>
+      </div>
+    </section>
+    <div id="notification" class="notification"></div>
+    <div id="context" class="context"></div>
+    <div id="shieldStatus" class="shield-status"></div>
+  </main>
+  <section id="touchControls">
+    <div id="joystick"><div id="joystickKnob"></div></div>
+    <button class="touch action-jump" data-action="jump">SALTO</button>
+    <button class="touch action-hit" data-action="hit">GOLPE</button>
+    <button class="touch action-interact" data-action="interact">E</button>
+  </section>
+  <section id="shop" class="panel hidden"><div class="panel-card">
+    <button class="close" data-close="shop">×</button><p>MEJORAS</p><h2>Tienda de equipamiento</h2>
+    <div class="shop-grid">
+      <button data-shop="speed">Bebida energética <b>$2,500</b></button>
+      <button data-shop="power">Guante fuerte <b>$8,000</b></button>
+      <button data-shop="shield">Escudo extendido <b>$12,000</b></button>
+      <button data-shop="trap">Trampa <b>$4,000</b></button>
+    </div>
+  </div></section>
+  <section id="rebirth" class="panel hidden"><div class="panel-card">
+    <button class="close" data-close="rebirth">×</button><p>PROGRESO PERMANENTE</p><h2>Rebirth</h2>
+    <div id="rebirthLevels"></div>
+  </div></section>
+  <section id="leaderboard" class="panel hidden"><div class="panel-card">
+    <button class="close" data-close="leaderboard">×</button><p>SALA ACTUAL</p><h2>Ranking</h2><ol id="leaderboardList"></ol>
+  </div></section>
+  <script type="module" src="game.js"></script>
+</body>
+</html>

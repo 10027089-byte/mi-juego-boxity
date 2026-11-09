@@ -1,11 +1,25 @@
-{
-  "servers": {
-    "boxity": {
-      "type": "http",
-      "url": "https://bloxity.io",
-      "headers": {
-        "Authorization": "Bearer bmcp_0A9JY_GZcwvNUWfyIufPuA9WwnptwrVUn52Rr7Y0SZ8"
-      }
-    }
-  }
-}
+## Roba un Brainrot 3D
+
+Juego web 3D para Boxity.io construido con Three.js. Incluye arena con seis bases, cinta central, diez Brainrots procedurales, bots de relleno, robo, combate, escudos, tienda, Rebirth y controles táctiles.
+
+### Controles
+
+- `WASD` / flechas: movimiento relativo a la cámara.
+- Ratón: cámara en tercera persona.
+- Espacio: salto.
+- Clic izquierdo: golpear.
+- `E`: comprar o robar.
+- `R`: panel Rebirth.
+- `X`: escudo de base.
+
+### Desarrollo local
+
+```bash
+python3 -m http.server 8080
+```
+
+Abrir `http://localhost:8080`.
+
+### Despliegue en Boxity
+
+Mantener `index.html` como punto de entrada y conservar `game.js`, `brainrots.js` y `style.css`.
