@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { GLTFLoader } from 'https://unpkg.com/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { BRAINROTS, RARITIES } from './brainrots.js';
 
 const SDK = window.Legion?.SDK || null;
@@ -79,7 +79,6 @@ function initializeBoxity() {
   };
   Object.entries(settings).forEach(([key, listener]) => SDK.settings?.listen?.(key, listener));
   SDK.game?.loadingStep?.('Boxity environment detected');
-  SDK.game?.loadingEnd?.('Roba un Brainrot 3D listo');
   SDK.game?.loadingStep?.('Arena y jugadores preparados');
   try {
     SDK.init({
