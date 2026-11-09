@@ -40,15 +40,6 @@ function save() {
 function initializeBoxity() {
   if (!SDK || window.__brainrotSdkInitialized) return;
   window.__brainrotSdkInitialized = true;
-  try {
-    SDK.init({
-      gameSlug: GAME_SLUG,
-      gameName: 'Roba un Brainrot 3D',
-      version: '2.0.0'
-    }).catch?.((error) => console.info('Inicializacion Boxity pendiente:', error?.message || 'SDK no disponible'));
-  } catch (error) {
-    console.info('Inicializacion Boxity pendiente:', error?.message || 'SDK no disponible');
-  }
   SDK.auth?.onUserChanged?.((user) => {
     localStorage.setItem('boxity-user-name', user?.username || user?.displayName || 'Jugador');
     loadRealAvatar();
@@ -67,6 +58,15 @@ function initializeBoxity() {
   };
   Object.entries(settings).forEach(([key, listener]) => SDK.settings?.listen?.(key, listener));
   SDK.game?.loadingStep?.('Arena y jugadores preparados');
+  try {
+    SDK.init({
+      gameSlug: GAME_SLUG,
+      gameName: 'Roba un Brainrot 3D',
+      version: '2.0.0'
+    });
+  } catch (error) {
+    console.info('Inicializacion Boxity pendiente:', error?.message || 'SDK no disponible');
+  }
 }
 
 function boxitySdkAssetApi() {
@@ -127,6 +127,7 @@ async function loadOfficialAvatarModel(target, descriptor, name) {
 
 let cameraSensitivity = 1;
 function init() {
+  initializeBoxity();
   scene = new THREE.Scene();
   scene.background = new THREE.Color('#83d8ff');
   scene.fog = new THREE.Fog('#83d8ff', 55, 120);
@@ -152,7 +153,6 @@ function init() {
   bindEvents();
   loadRealAvatar();
   setupMultiplayer();
-  initializeBoxity();
   renderRebirth();
   SDK?.game?.loadingEnd?.();
   SDK?.game?.gameplayStart?.();
