@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
   <title>Roba un Brainrot 3D</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://bloxity.io">
   <script src="https://sdk.bloxity.io/v1/legion-sdk.min.js"></script>
   <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js"}}</script>
 </head>
@@ -21,7 +22,6 @@
       <div class="actions">
         <button id="shopButton">TIENDA</button>
         <button id="rebirthButton">RENA CER</button>
-        <button id="leaderboardButton">RANKING</button>
         <button id="boxityGemsButton">PASE VIP · 25 GEMAS</button>
         <button id="boxityAdButton">ANUNCIO X2 · 2 MIN</button>
       </div>
@@ -49,9 +49,6 @@
   <section id="rebirth" class="panel hidden"><div class="panel-card">
     <button class="close" data-close="rebirth">×</button><p>PROGRESO PERMANENTE</p><h2>Rebirth</h2>
     <div id="rebirthLevels"></div>
-  </div></section>
-  <section id="leaderboard" class="panel hidden"><div class="panel-card">
-    <button class="close" data-close="leaderboard">×</button><p>SALA ACTUAL</p><h2>Ranking</h2><ol id="leaderboardList"></ol>
   </div></section>
   <script type="module" src="game.js"></script>
 </body>

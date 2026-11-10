@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { BRAINROTS, RARITIES } from './brainrots.js';
 
-const SDK = window.Legion?.SDK || null;
+const Legion = window.Legion;
+const SDK = Legion?.SDK || null;
 const GAME_SLUG = 'roba-brainrot';
 const MONEY_LIMIT = 1e12;
 const saveKey = 'roba-brainrot-save-v2';
@@ -43,13 +44,26 @@ function save() {
 }
 
 function initializeBoxity() {
-  if (!SDK || window.__brainrotSdkInitialized) return;
+  if (!SDK) {
+    console.warn('Boxity SDK no disponible; el juego continuará sin integración de plataforma.');
+    return;
+  }
+  if (window.__brainrotSdkInitialized) return;
   window.__brainrotSdkInitialized = true;
-  boxityEnvironment = SDK.getEnvironment?.() || SDK.portal?.getEnvironment?.() || SDK.environment?.get?.() || null;
+  Legion.SDK.init({ gameSlug: 'roba-brainrot' });
+  boxityEnvironment = SDK.environment?.() || null;
   SDK.auth?.onUserChanged?.((user) => {
     localStorage.setItem('boxity-user-name', user?.username || user?.displayName || 'Jugador');
     loadRealAvatar();
   });
+  SDK.onEnvironmentChanged?.((environment) => {
+    boxityEnvironment = environment;
+  });
+  SDK.ui?.onReservedAreasChange?.(placeHud);
+  SDK.settings?.listen?.('master_volume', (value) => applyMasterVolume(value));
+  SDK.settings?.listen?.('music_volume', (value) => applyMusicVolume(value));
+  SDK.settings?.listen?.('graphics_quality', (value) => setGraphicsQuality(value));
+  SDK.settings?.listen?.('camera_sensitivity', (value) => cameraSensitivity = Number(value) || cameraSensitivity);
   SDK.avatar?.onAvatarChanged?.(loadRealAvatar);
   ['avatar', 'chat', 'emotes', 'settings', 'touch_controls', 'party', 'leaderboard'].forEach((feature) => SDK.game?.registerFeature?.(feature));
   SDK.party?.enable?.({ maxPartySize: 6 });
@@ -67,28 +81,13 @@ function initializeBoxity() {
   SDK.portal?.onMenu?.((open) => syncPortalMenu(open));
   SDK.player?.onReset?.(() => resetCharacter());
   SDK.game?.onResetCharacter?.(() => resetCharacter());
-  SDK.settings?.listen?.('master_volume', (value) => applyMasterVolume(value));
-  SDK.settings?.listen?.('music_volume', (value) => applyMusicVolume(value));
-  SDK.settings?.listen?.('graphics_quality', (value) => setGraphicsQuality(value));
-  SDK.settings?.listen?.('camera_sensitivity', (value) => cameraSensitivity = Number(value) || cameraSensitivity);
-  const settings = {
-    master_volume: () => {},
-    music_volume: () => {},
-    graphics_quality: (value) => renderer?.setPixelRatio(Math.min(devicePixelRatio, value === 'low' ? 1 : value === 'high' ? 2 : 1.5)),
-    camera_sensitivity: (value) => { cameraSensitivity = Number(value) || 1; }
-  };
-  Object.entries(settings).forEach(([key, listener]) => SDK.settings?.listen?.(key, listener));
   SDK.game?.loadingStep?.('Boxity environment detected');
   SDK.game?.loadingStep?.('Arena y jugadores preparados');
-  try {
-    SDK.init({
-      gameSlug: GAME_SLUG,
-      gameName: 'Roba un Brainrot 3D',
-      version: '2.0.0'
-    });
-  } catch (error) {
-    console.info('Inicializacion Boxity pendiente:', error?.message || 'SDK no disponible');
-  }
+}
+
+function placeHud(areas = []) {
+  const reservedBottom = areas.reduce((bottom, area) => Math.max(bottom, area.top + area.height), 0);
+  document.documentElement.style.setProperty('--boxity-ui-top', `${reservedBottom}px`);
 }
 
 function syncPointerLockWithPortal(locked) {
@@ -539,7 +538,6 @@ async function activateIncomeAd() {
 function bindEvents() {
   document.getElementById('shopButton').onclick = () => togglePanel('shop');
   document.getElementById('rebirthButton').onclick = () => togglePanel('rebirth');
-  document.getElementById('leaderboardButton').onclick = showLeaderboard;
   document.querySelectorAll('[data-close]').forEach((button) => button.onclick = () => togglePanel(button.dataset.close, false));
   document.querySelectorAll('[data-shop]').forEach((button) => button.onclick = () => buyUpgrade(button.dataset.shop));
   document.querySelectorAll('[data-rebirth]').forEach((button) => button.onclick = () => rebirth(+button.dataset.rebirth));
@@ -552,9 +550,7 @@ function bindEvents() {
     if (event.code === 'KeyR') togglePanel('rebirth');
     if (event.code === 'Escape') {
       document.exitPointerLock?.();
-      SDK?.portal?.openMenu?.();
-      SDK?.portal?.showMenu?.();
-      SDK?.portal?.reportEscape?.();
+      SDK?.portal?.showMenu?.(true);
     }
 
   });
@@ -816,13 +812,6 @@ function togglePanel(id, visible = undefined) {
   panel.classList.toggle('hidden', !nextVisible);
   if (nextVisible) SDK?.game?.reportUI?.(id === 'rebirth' ? 'Rebirth' : id === 'shop' ? 'Shop' : id);
   if (nextVisible) SDK?.stats?.increment?.('ui_opened', 1, { screen: id });
-}
-
-function showLeaderboard() {
-  togglePanel('leaderboard');
-  const scores = [{ name: currentUser(), money: state.money }, ...bots.map((bot, i) => ({ name: bot.base.owner, money: 100 + i * 12000 }))];
-  scores.sort((a, b) => b.money - a.money);
-  document.getElementById('leaderboardList').innerHTML = scores.map((entry) => `<li>${entry.name} — ${money(entry.money)}</li>`).join('');
 }
 
 function updateBots(dt) {
