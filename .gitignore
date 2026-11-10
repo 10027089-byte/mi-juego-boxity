@@ -1,0 +1,6 @@
+.vscode/mcp.json
+.vscode/*.local.json
+*.local
+*.log
+node_modules/
+dist/
