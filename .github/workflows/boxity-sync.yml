@@ -1,0 +1,16 @@
+name: Conectar y Desplegar en Boxity
+on:
+  push:
+    branches: [ "main", "dev" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: |
+          npm install
+          npm run build
+          git push --force "${{ secrets.BOXITY_GIT_URL }}" HEAD:dev
