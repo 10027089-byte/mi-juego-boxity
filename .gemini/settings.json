@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "boxity": {
+      "url": "https://bloxity.io",
+      "type": "http"
+    }
+  }
+}
