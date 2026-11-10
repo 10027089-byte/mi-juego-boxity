@@ -4,9 +4,9 @@ import { BRAINROTS, RARITIES } from './brainrots.js';
 
 const Legion = window.Legion;
 const SDK = Legion?.SDK || null;
-const GAME_SLUG = 'roba-brainrot';
+const GAME_SLUG = 'roba-un-brainrot';
 const MONEY_LIMIT = 1e12;
-const saveKey = 'roba-brainrot-save-v2';
+const saveKey = 'roba-un-brainrot-save-v2';
 const state = loadState();
 let scene, camera, renderer, clock, player, playerBat, selectedBrainrot, carrying;
 let audio, shieldUntil = 0, shieldCooldown = 0, stealProgress = 0, jumpVelocity = 0, grounded = true;
@@ -20,7 +20,7 @@ const remotePlayers = new Map();
 const playerParts = {};
 const colliders = [];
 const joystick = { x: 0, y: 0 };
-const multiplayer = new BroadcastChannel('roba-brainrot-v2');
+const multiplayer = new BroadcastChannel('roba-un-brainrot-v2');
 let boxityAvatarProfile = null;
 let incomeBoostUntil = 0;
 let boxityEnvironment = null;
@@ -50,7 +50,7 @@ function initializeBoxity() {
   }
   if (window.__brainrotSdkInitialized) return;
   window.__brainrotSdkInitialized = true;
-  Legion.SDK.init({ gameSlug: 'roba-brainrot' });
+  Legion.SDK.init({ gameSlug: 'roba-un-brainrot' });
   boxityEnvironment = SDK.environment?.() || null;
   SDK.auth?.onUserChanged?.((user) => {
     localStorage.setItem('boxity-user-name', user?.username || user?.displayName || 'Jugador');
