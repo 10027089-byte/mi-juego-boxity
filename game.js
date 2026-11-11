@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { BRAINROTS, RARITIES } from './brainrots.js';
 
-const Legion = window.Legion;
-const SDK = Legion?.SDK || null;
+let SDK = window.Legion?.SDK || null;
 const GAME_SLUG = 'roba-un-brainrot';
 const MONEY_LIMIT = 1e12;
 const saveKey = 'roba-un-brainrot-save-v2';
@@ -11,28 +12,49 @@ const state = loadState();
 let scene, camera, renderer, clock, player, playerBat, selectedBrainrot, carrying;
 let audio, shieldUntil = 0, shieldCooldown = 0, stealProgress = 0, jumpVelocity = 0, grounded = true;
 let yaw = Math.PI / 2, pitch = -.4, lastIncomeTick = 0, botTick = 0, muted = false;
-let hitCooldown = 0, stunnedUntil = 0;
+let hitCooldown = 0, stunnedUntil = 0, carriedFromSlot = null;
 const keys = {};
 const bots = [];
 const conveyorItems = [];
 const conveyorStripes = [];
 const bases = [];
 const remotePlayers = new Map();
+const avatarModelCache = new Map();
 const playerParts = {};
 const colliders = [];
 const joystick = { x: 0, y: 0 };
-const multiplayer = new BroadcastChannel('roba-un-brainrot-v2');
+let reservedAreas = [];
+const multiplayer = typeof BroadcastChannel === 'function' ? new BroadcastChannel('roba-un-brainrot-v2') : null;
 let boxityAvatarProfile = null;
 let boxityOutfitKey = null;
+let boxityFriends = [];
 let incomeBoostUntil = 0;
 let boxityEnvironment = null;
 let masterVolume = 1;
+let boxityInitialized = false;
+let firstFrameRendered = false;
+let loadingEndSent = false;
+let gameplayStarted = false;
+let pausedForAd = false;
+let mutedBeforeAd = false;
+let leaderboardTimer = 0;
+let emoteCatalog = [];
+let emoteCatalogRequested = false;
+let emoteCatalogLoading = false;
+const pendingEmotes = [];
+let unsubscribePlayerEvents = null;
 
 function loadState() {
   try {
-    return Object.assign({ money: 100, rebirth: 0, slots: [], upgrades: {}, speedUntil: 0, shieldBonus: 0, powerBonus: 0 }, JSON.parse(localStorage.getItem(saveKey) || '{}'));
+    const defaults = { money: 100, moneyEarned: 100, steals: 0, rebirths: 0, rebirth: 0, slots: [], upgrades: {}, speedUntil: 0, shieldBonus: 0, powerBonus: 0 };
+    const saved = Object.assign(defaults, JSON.parse(localStorage.getItem(saveKey) || '{}'));
+    ['money', 'moneyEarned', 'steals', 'rebirths', 'rebirth'].forEach((key) => {
+      const score = Number(saved[key]);
+      saved[key] = Number.isFinite(score) && score >= 0 ? score : defaults[key];
+    });
+    return saved;
   } catch {
-    return { money: 100, rebirth: 0, slots: [], upgrades: {}, speedUntil: 0, shieldBonus: 0, powerBonus: 0 };
+    return { money: 100, moneyEarned: 100, steals: 0, rebirths: 0, rebirth: 0, slots: [], upgrades: {}, speedUntil: 0, shieldBonus: 0, powerBonus: 0 };
   }
 }
 
@@ -42,23 +64,66 @@ function save() {
   SDK?.data?.save?.(state);
 }
 
+function scheduleLeaderboardSync() {
+  if (!SDK?.leaderboard?.submit || leaderboardTimer) return;
+  leaderboardTimer = window.setTimeout(() => {
+    leaderboardTimer = 0;
+    submitLeaderboardScores();
+  }, 15000);
+}
+
+function submitLeaderboardScores() {
+  if (!SDK?.leaderboard?.submit) return;
+  const scores = [
+    ['money', state.moneyEarned],
+    ['steals', state.steals],
+    ['rebirths', state.rebirths]
+  ];
+  scores.forEach(([board, score]) => {
+    if (!Number.isFinite(score) || score < 0) return;
+    try {
+      Promise.resolve(SDK.leaderboard.submit(board, score)).catch((error) => {
+        console.warn(`No se pudo enviar la puntuación del tablero ${board}.`, error);
+      });
+    } catch (error) {
+      console.warn(`No se pudo enviar la puntuación del tablero ${board}.`, error);
+    }
+  });
+}
+
 function initializeBoxity() {
+  SDK = window.Legion?.SDK || null;
   if (!SDK) {
-    console.warn('Boxity SDK no disponible; el juego continuará sin integración de plataforma.');
     return;
   }
+  if (boxityInitialized) {
+    finishLoading();
+    return;
+  }
+  boxityInitialized = true;
   if (!window.__brainrotSdkInitialized) {
-    window.__brainrotSdkInitialized = true;
-    Legion.SDK.init({ gameSlug: GAME_SLUG });
+    try {
+      SDK.init({ gameSlug: GAME_SLUG });
+      window.__brainrotSdkInitialized = true;
+    } catch (error) {
+      boxityInitialized = false;
+      console.error('No se pudo inicializar el SDK de Boxity.', error);
+      return;
+    }
   }
-  if (!window.__brainrotLoadingEnded) {
-    window.__brainrotLoadingEnded = true;
-    SDK.game?.loadingEnd?.();
-  }
+  SDK.leaderboard?.define?.([
+    { id: 'money', label: 'Dinero acumulado', order: 'desc', mode: 'best', format: 'compact', reset: 'none' },
+    { id: 'steals', label: 'Brainrots robados', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
+    { id: 'rebirths', label: 'Renacimientos', order: 'desc', mode: 'best', format: 'number', reset: 'none' }
+  ]);
+  SDK.ads?.declareScreens?.({ gameplay: {}, panel: {} });
+  SDK.ads?.onBreakStart?.(pauseForAdBreak);
+  SDK.ads?.onBreakEnd?.(resumeFromAdBreak);
   boxityEnvironment = SDK.environment?.() || null;
   SDK.auth?.onUserChanged?.((user) => {
     const identity = user || SDK.auth?.getGuest?.();
-    const name = identity?.username || identity?.displayName || 'Invitado';
+    const name = identity?.displayName || identity?.username || 'Invitado';
+    boxityFriends = [];
     localStorage.setItem('boxity-user-name', name);
     if (player) {
       updatePlayerLabel(name);
@@ -67,10 +132,13 @@ function initializeBoxity() {
         updateLabel(bases[0].sign, name);
       }
     }
-    loadRealAvatar(SDK.avatar?.getEquipped?.() || identity?.avatar);
+    loadRealAvatar(SDK.avatar?.getEquipped?.() || identity?.avatar || {});
+    if (user) loadBoxityFriends();
+    scheduleLeaderboardSync();
   });
   SDK.onEnvironmentChanged?.((environment) => {
     boxityEnvironment = environment;
+    loadEmoteCatalog();
   });
   SDK.ui?.onReservedAreasChange?.(placeHud);
   SDK.settings?.listen?.('master_volume', (value) => applyMasterVolume(value));
@@ -78,27 +146,90 @@ function initializeBoxity() {
   SDK.settings?.listen?.('graphics_quality', (value) => setGraphicsQuality(value));
   SDK.settings?.listen?.('camera_sensitivity', (value) => cameraSensitivity = Number(value) || cameraSensitivity);
   SDK.avatar?.onAvatarChanged?.((equipped) => loadRealAvatar(equipped || SDK.avatar?.getEquipped?.() || currentIdentity()?.avatar));
-  ['avatar', 'chat', 'emotes', 'settings', 'touch_controls', 'party', 'leaderboard'].forEach((feature) => SDK.game?.registerFeature?.(feature));
-  SDK.party?.enable?.({ maxPartySize: 6 });
-  SDK.player?.onEvent?.((event) => {
-    if (event === 'play_emote') animateEmote();
+  SDK.avatar?.onProportionsChanged?.(() => loadRealAvatar(SDK.avatar?.getEquipped?.() || currentIdentity()?.avatar || {}));
+  ['avatar', 'chat', 'emotes', 'settings', 'touch_controls', 'leaderboard'].forEach((feature) => SDK.game?.registerFeature?.(feature));
+  unsubscribePlayerEvents = SDK.player?.onEvent?.((event, data) => {
+    if (event === 'play_emote') playEmote(player, data);
+    if (event === 'respawn_request') resetCharacter();
+    if (event === 'pointer_lock_changed') syncPointerLockWithPortal(Boolean(data?.locked ?? data));
   });
-  SDK.avatar?.playEmote?.({ wheel: true });
-  SDK.emotes?.enableWheel?.();
-  SDK.party?.enableInvite?.();
-  SDK.party?.enableInvites?.();
   SDK.chat?.enableBubbles?.({ enabled: true });
-  SDK.matchmaking?.join?.({ gameSlug: GAME_SLUG });
-  SDK.matchmaker?.join?.({ gameSlug: GAME_SLUG });
   SDK.portal?.onPointerLock?.((locked) => syncPointerLockWithPortal(locked));
   SDK.portal?.onMenu?.((open) => syncPortalMenu(open));
   SDK.player?.onReset?.(() => resetCharacter());
   SDK.game?.onResetCharacter?.(() => resetCharacter());
+  document.getElementById('boxityAdButton').hidden = !SDK.ads?.isAvailable?.();
+  if (firstFrameRendered) finishLoading();
+  SDK.ads?.screen?.('gameplay');
+  loadEmoteCatalog();
 }
 
-function placeHud(areas = []) {
-  const reservedBottom = areas.reduce((bottom, area) => Math.max(bottom, area.top + area.height), 0);
-  document.documentElement.style.setProperty('--boxity-ui-top', `${reservedBottom}px`);
+function placeHud(areas = reservedAreas) {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  const reserved = { top: 0, right: 0, bottom: 0, left: 0 };
+  reservedAreas = Array.isArray(areas) ? areas : [];
+  reservedAreas.forEach((area) => {
+    const left = Number.isFinite(area?.left) ? area.left : area?.x;
+    const top = Number.isFinite(area?.top) ? area.top : area?.y;
+    const areaWidth = Number.isFinite(area?.width) ? area.width : null;
+    const areaHeight = Number.isFinite(area?.height) ? area.height : null;
+    const right = Number.isFinite(area?.right) ? area.right : Number.isFinite(left) && areaWidth !== null ? left + areaWidth : null;
+    const bottom = Number.isFinite(area?.bottom) ? area.bottom : Number.isFinite(top) && areaHeight !== null ? top + areaHeight : null;
+    if (Number.isFinite(top) && Number.isFinite(bottom) && top < height / 2) {
+      reserved.top = Math.max(reserved.top, bottom);
+    }
+    if (Number.isFinite(top) && Number.isFinite(bottom) && bottom >= height - 1 && top >= height / 2) {
+      reserved.bottom = Math.max(reserved.bottom, height - top);
+    }
+    if (Number.isFinite(left) && Number.isFinite(right) && right - left < width / 2) {
+      if (left <= 1) reserved.left = Math.max(reserved.left, right);
+      if (right >= width - 1) reserved.right = Math.max(reserved.right, width - left);
+    }
+  });
+  Object.entries(reserved).forEach(([edge, value]) => {
+    document.documentElement.style.setProperty(`--boxity-ui-${edge}`, `${value}px`);
+  });
+}
+
+function finishLoading() {
+  if (!firstFrameRendered || !SDK) return;
+  if (!loadingEndSent && SDK.game?.loadingEnd) {
+    loadingEndSent = true;
+    window.__brainrotLoadingEnded = true;
+    try {
+      SDK.game.loadingEnd();
+    } catch (error) {
+      console.error('No se pudo cerrar la pantalla de carga de Boxity.', error);
+    }
+  }
+  if (!gameplayStarted) {
+    gameplayStarted = true;
+    try {
+      SDK.game?.gameplayStart?.();
+    } catch (error) {
+      console.error('No se pudo informar el inicio de la partida a Boxity.', error);
+    }
+  }
+}
+
+function pauseForAdBreak() {
+  if (pausedForAd) return;
+  pausedForAd = true;
+  mutedBeforeAd = muted;
+  muted = true;
+  if (audio && audio.state !== 'suspended') {
+    audio.suspend().catch((error) => console.warn('No se pudo pausar el audio durante el anuncio.', error));
+  }
+}
+
+function resumeFromAdBreak() {
+  if (!pausedForAd) return;
+  pausedForAd = false;
+  muted = mutedBeforeAd;
+  if (audio?.state === 'suspended') {
+    audio.resume().catch((error) => console.warn('No se pudo reanudar el audio tras el anuncio.', error));
+  }
 }
 
 function syncPointerLockWithPortal(locked) {
@@ -124,22 +255,35 @@ function applyMusicVolume(value) {
 
 function setGraphicsQuality(value) {
   const quality = String(value).toLowerCase();
-  renderer?.setPixelRatio?.(Math.min(devicePixelRatio, quality === 'low' ? 1 : quality === 'high' || quality === 'ultra' ? 2 : 1.5));
+  const maxPixelRatio = innerWidth < 800 || quality === 'low' ? 1 : quality === 'high' || quality === 'ultra' ? 2 : 1.5;
+  renderer?.setPixelRatio?.(Math.min(window.devicePixelRatio || 1, maxPixelRatio));
 }
 
-function resetCharacter() {
-  player?.position?.set(-9, 0, 0);
-  if (player) player.rotation.y = Math.PI / 2;
-  stunnedUntil = 0;
+function resetCharacter(returnToBase = false) {
+  if (carrying && player) {
+    player.remove(carrying);
+    if (carriedFromSlot && !carriedFromSlot.brainrot) {
+      carriedFromSlot.brainrot = carrying.userData.definition;
+      scene.remove(carrying);
+    } else {
+      carrying.position.copy(player.position);
+      carrying.position.y = .2;
+      scene.add(carrying);
+      conveyorItems.push(carrying);
+    }
+  }
   carrying = null;
-  notify('Personaje reiniciado por Boxity');
-}
-
-function showDeathScreen(cause = 'golpe de rival') {
-  SDK?.player?.announceDeath?.(cause);
-  SDK?.portal?.showDeathScreen?.({ title: 'El personaje fue eliminado', reason: cause, respawn: resetCharacter });
-  notify(`Eliminado: ${cause}`);
-  resetCharacter();
+  carriedFromSlot = null;
+  const homeBase = returnToBase ? bases[0] : null;
+  const spawnX = homeBase ? homeBase.x - homeBase.side * 7.5 : -9;
+  const spawnZ = homeBase ? homeBase.z : 0;
+  player?.position?.set(spawnX, 0, spawnZ);
+  if (player) player.rotation.y = Math.PI / 2;
+  jumpVelocity = 0;
+  grounded = true;
+  stunnedUntil = 0;
+  updateCamera(1);
+  notify(returnToBase ? 'Caíste fuera del mapa y volviste a tu base' : 'Personaje reiniciado');
 }
 
 let cameraSensitivity = 1;
@@ -151,11 +295,11 @@ function init() {
   camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, .1, 250);
   renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
   renderer.setSize(innerWidth, innerHeight);
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, innerWidth < 800 ? 1 : 1.5));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.15;
-  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.enabled = !matchMedia('(pointer: coarse)').matches;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   document.getElementById('game').appendChild(renderer.domElement);
   clock = new THREE.Clock();
@@ -171,11 +315,9 @@ function init() {
   buildConveyor();
   updateCamera(1);
   bindEvents();
-  loadRealAvatar(SDK?.avatar?.getEquipped?.() || currentIdentity()?.avatar);
+  loadRealAvatar(SDK?.avatar?.getEquipped?.() || currentIdentity()?.avatar || {});
   setupMultiplayer();
-  refreshGemBalance();
   renderRebirth();
-  SDK?.game?.gameplayStart?.();
   animate();
 }
 
@@ -379,42 +521,71 @@ function updatePlayerLabel(name) {
   if (tag) updateLabel(tag, name);
 }
 
-async function loadRealAvatar(equipped = SDK?.avatar?.getEquipped?.()) {
+async function loadRealAvatar(equipped = SDK?.avatar?.getEquipped?.() || {}) {
   if (!player || !equipped || typeof equipped !== 'object') return;
   boxityAvatarProfile = equipped;
   boxityOutfitKey = SDK?.avatar?.getOutfitKey?.() || null;
+  const dressing = player.userData.boxityDressing;
+  if (dressing?.update && player.userData.outfitKey !== boxityOutfitKey) {
+    try {
+      await dressing.update(boxityOutfitKey);
+      player.userData.outfitKey = boxityOutfitKey;
+      announceAvatarProfile();
+      return;
+    } catch (error) {
+      console.warn('No se pudo actualizar el outfit oficial de Boxity.', error);
+    }
+  }
   await loadOfficialAvatarModel(player, equipped, currentUser(), boxityOutfitKey);
   announceAvatarProfile();
 }
 
-async function loadOfficialAvatarModel(target, equipped, name, outfitKey, remoteClient = null) {
+async function loadOfficialAvatarModel(target, equipped, name, outfitKey, remoteClient = null, forceStandard = false) {
   if (!target || !equipped || typeof equipped !== 'object') return false;
   const characterApi = SDK?.character;
-  const modelUrl = characterApi?.getCharacterFor?.(equipped);
-  if (typeof modelUrl !== 'string' || !modelUrl) return false;
-
+  const avatarApi = SDK?.avatar;
   const version = (target.userData.avatarLoadVersion || 0) + 1;
   target.userData.avatarLoadVersion = version;
+  const characterId = equipped.characterId || (target === player ? avatarApi?.getCharacterId?.() : null);
+  let character = null;
+  if (!forceStandard && characterId) {
+    try {
+      character = target === player && avatarApi?.getCharacter
+        ? await avatarApi.getCharacter()
+        : await avatarApi?.getCharacterFor?.(equipped);
+    } catch (error) {
+      console.warn('No se pudo resolver el personaje personalizado de Boxity.', error);
+    }
+  }
+  if (version !== target.userData.avatarLoadVersion) return false;
+  const customModelUrl = typeof character === 'string' ? character : character?.glbUrl || character?.url;
+  const staticUrl = boxityEnvironment?.staticUrl || SDK?.environment?.()?.staticUrl;
+  const modelUrl = customModelUrl || (staticUrl ? `${staticUrl.replace(/\/$/, '')}/avatars/player.glb` : null);
+  if (!modelUrl) return false;
+
   let gltf;
   try {
-    gltf = await new GLTFLoader().loadAsync(modelUrl);
+    gltf = await loadAvatarModel(modelUrl);
   } catch (error) {
+    if (customModelUrl && !forceStandard) {
+      return loadOfficialAvatarModel(target, equipped, name, outfitKey, remoteClient, true);
+    }
     console.warn('No se pudo cargar el modelo oficial del avatar Boxity.', error);
     return false;
   }
   if (version !== target.userData.avatarLoadVersion) return false;
 
   const identity = currentIdentity();
-  const proportions = equipped.proportions || SDK?.avatar?.getProportions?.();
+  const proportions = equipped.proportions || avatarApi?.getProportions?.();
   let dressing = null;
   try {
-    if (outfitKey && characterApi.canDress?.(outfitKey) && characterApi.dress) {
+    if (!customModelUrl && outfitKey && characterApi?.canDress?.(outfitKey) && characterApi.dress) {
       dressing = await characterApi.dress({
         root: gltf.scene,
         GLTFLoader,
         THREE,
         outfitKey,
-        playerId: remoteClient || identity?.userId || identity?.id || identity?.username,
+        playerId: remoteClient || identity?._id || identity?.userId || identity?.id || identity?.username,
         proportions
       });
     }
@@ -425,7 +596,10 @@ async function loadOfficialAvatarModel(target, equipped, name, outfitKey, remote
     dressing?.dispose?.();
     return false;
   }
-  if (!dressing) await applyAvatarTextureAndAccessories(gltf.scene, equipped, version, target);
+  if (!dressing) {
+    await applyAvatarTextureAndAccessories(gltf.scene, equipped, version, target, character, Boolean(customModelUrl), staticUrl);
+    if (!customModelUrl) applyAvatarProportions(gltf.scene, proportions);
+  }
 
   const bounds = new THREE.Box3().setFromObject(gltf.scene);
   const size = bounds.getSize(new THREE.Vector3());
@@ -442,6 +616,10 @@ async function loadOfficialAvatarModel(target, equipped, name, outfitKey, remote
   avatarRoot.userData.boxityAvatar = true;
   avatarRoot.userData.boxityDressing = dressing;
   avatarRoot.userData.outfitKey = outfitKey;
+  avatarRoot.userData.avatarCharacter = character;
+  avatarRoot.userData.animations = gltf.animations;
+  avatarRoot.userData.avatarLoadVersion = version;
+  avatarRoot.userData.avatarScene = gltf.scene;
   if (gltf.animations.length) {
     const mixer = new THREE.AnimationMixer(gltf.scene);
     const walkClip = gltf.animations.find((clip) => /walk|run/i.test(clip.name));
@@ -478,8 +656,21 @@ async function loadOfficialAvatarModel(target, equipped, name, outfitKey, remote
   return true;
 }
 
-async function applyAvatarTextureAndAccessories(root, equipped, version, target) {
-  const skinUrl = SDK?.avatar?.getSkinTextureUrlFor?.(equipped);
+async function loadAvatarModel(url) {
+  let load = avatarModelCache.get(url);
+  if (!load) {
+    load = new GLTFLoader().loadAsync(url);
+    avatarModelCache.set(url, load);
+    load.catch(() => {
+      if (avatarModelCache.get(url) === load) avatarModelCache.delete(url);
+    });
+  }
+  const source = await load;
+  return { ...source, scene: cloneSkeleton(source.scene) };
+}
+
+async function applyAvatarTextureAndAccessories(root, equipped, version, target, character, customCharacter, staticUrl) {
+  const skinUrl = customCharacter ? null : SDK?.avatar?.getSkinTextureUrlFor?.(equipped);
   if (skinUrl) {
     try {
       const texture = await new THREE.TextureLoader().loadAsync(skinUrl);
@@ -505,14 +696,37 @@ async function applyAvatarTextureAndAccessories(root, equipped, version, target)
   }
 
   const avatarApi = SDK?.avatar;
-  const slots = avatarApi?.getAccessorySlots?.() || [];
-  for (const slot of slots) {
-    const itemId = equipped?.[slot.field];
-    if (!itemId || itemId === '-1') continue;
-    const urls = avatarApi.getAccessoryUrls?.(slot.field, itemId);
-    if (!urls?.mesh) continue;
+  const slots = [...(avatarApi?.getAccessorySlots?.() || [])];
+  const fields = new Set(slots.map((slot) => slot.field));
+  const hatId = (target === player ? avatarApi?.getHatId?.() : null) ?? equipped.hatId;
+  const backId = (target === player ? avatarApi?.getBackId?.() : null) ?? equipped.backId;
+  if (hatId && !fields.has('hatId')) slots.push({ field: 'hatId', id: hatId, bone: 'Neck1', origin: [0, .8, 0] });
+  if (backId && !fields.has('backId')) slots.push({ field: 'backId', id: backId, bone: 'Spine2', origin: [0, 4.2, 0] });
+  let restInverses = captureRestInverses(root);
+  if (customCharacter && staticUrl) {
     try {
-      const gltf = await new GLTFLoader().loadAsync(urls.mesh);
+      const standard = await loadAvatarModel(`${staticUrl.replace(/\/$/, '')}/avatars/player.glb`);
+      restInverses = captureRestInverses(standard.scene);
+    } catch (error) {
+      console.warn('No se pudo cargar el rig estándar para ajustar accesorios del personaje personalizado.', error);
+    }
+  }
+  for (const slot of slots) {
+    const itemId = slot.id ?? (slot.field === 'hatId' ? hatId : slot.field === 'backId' ? backId : equipped?.[slot.field]);
+    if (itemId === undefined || itemId === null || itemId === '' || itemId === '-1' || itemId === 'undefined') continue;
+    try {
+      let urls = avatarApi?.getAccessoryUrls?.(slot.field, itemId);
+      if (!urls?.mesh && staticUrl) {
+        const part = slot.field.replace(/Id$/, '');
+        const folder = ['hat', 'hair', 'mask'].includes(part) ? 'hats' : part;
+        const baseUrl = `${staticUrl.replace(/\/$/, '')}/avatars`;
+        urls = {
+          mesh: `${baseUrl}/items/${folder}/${itemId}.obj`,
+          texture: `${baseUrl}/textures/${folder}/${itemId}.png`
+        };
+      }
+      if (!urls?.mesh) continue;
+      const accessory = await loadAvatarAccessory(urls.mesh);
       if (version !== target.userData.avatarLoadVersion) return;
       if (urls.texture) {
         const texture = await new THREE.TextureLoader().loadAsync(urls.texture);
@@ -521,30 +735,131 @@ async function applyAvatarTextureAndAccessories(root, equipped, version, target)
           return;
         }
         texture.colorSpace = THREE.SRGBColorSpace;
-        gltf.scene.traverse((child) => {
+        accessory.traverse((child) => {
           if (!child.isMesh) return;
           child.material = child.material.clone();
           child.material.map = texture;
           child.material.needsUpdate = true;
         });
       }
-      attachAccessoryToBone(root, gltf.scene, slot.bone, slot.origin);
-      if (slot.mirrorBone) attachAccessoryToBone(root, gltf.scene.clone(true), slot.mirrorBone, slot.origin, true);
+      const origin = customCharacter && /^(hatId|hairId|maskId)$/.test(slot.field)
+        ? [0, 5.6, 0]
+        : slot.origin;
+      attachAccessoryToBone(root, accessory, slot.bone, origin, false, customCharacter ? character : null, slot, restInverses);
+      if (slot.mirrorBone) attachAccessoryToBone(root, accessory.clone(true), slot.mirrorBone, origin, true, customCharacter ? character : null, slot, restInverses);
     } catch (error) {
       console.warn(`No se pudo cargar el accesorio Boxity ${slot.field}.`, error);
     }
   }
 }
 
-function attachAccessoryToBone(root, accessory, boneName, origin = [0, 0, 0], mirror = false) {
+async function loadAvatarAccessory(url) {
+  if (/\.obj(?:$|[?#])/i.test(url)) return new OBJLoader().loadAsync(url);
+  return (await new GLTFLoader().loadAsync(url)).scene;
+}
+
+function captureRestInverses(root) {
+  root.updateMatrixWorld(true);
+  const modelInverse = root.matrixWorld.clone().invert();
+  const restInverses = new Map();
+  root.traverse((object) => {
+    if (!object.isBone) return;
+    restInverses.set(object.name, modelInverse.clone().multiply(object.matrixWorld).invert());
+  });
+  return restInverses;
+}
+
+function applyAvatarProportions(root, proportions = {}) {
+  const value = (key) => Number.isFinite(proportions?.[key]) ? proportions[key] : 1;
+  const height = value('height');
+  const shoulderWidth = value('shoulderWidth');
+  const armLength = value('armLength');
+  const legOffsetX = value('legOffsetX');
+  const torsoScaleX = value('torsoScaleX');
+  const neckHeight = value('neckHeight');
+  const headScale = value('headScale');
+  root.scale.y *= height;
+
+  const torso = root.getObjectByName('Spine1');
+  if (torso) torso.scale.x *= torsoScaleX;
+  const neck = root.getObjectByName('Neck1');
+  if (neck) neck.position.y *= neckHeight;
+  const head = root.getObjectByName('Head1') || root.getObjectByName('Head');
+  if (head) head.scale.multiplyScalar(headScale);
+  const shoulderOffset = .4 * (shoulderWidth - 1 + torsoScaleX - 1);
+  [['ArmL_Offset', 1], ['ArmR_Offset', -1]].forEach(([name, side]) => {
+    const bone = root.getObjectByName(name);
+    if (bone) bone.position.x += side * shoulderOffset;
+  });
+  [['ArmL1', 1], ['ArmR1', -1]].forEach(([name]) => {
+    const bone = root.getObjectByName(name);
+    if (bone) bone.scale.y *= armLength;
+  });
+  [['LegL1', 1], ['LegR1', -1]].forEach(([name, side]) => {
+    const bone = root.getObjectByName(name);
+    if (bone) bone.position.x += side * .48 * (legOffsetX - 1);
+  });
+}
+
+function attachAccessoryToBone(root, accessory, boneName, origin = [0, 0, 0], mirror = false, character = null, slot = null, restInverses = new Map()) {
   const bone = root.getObjectByName(boneName);
   if (!bone) return;
   const attachment = new THREE.Group();
   attachment.name = `boxity-${boneName}`;
-  attachment.position.fromArray(origin);
-  if (mirror) attachment.scale.x = -1;
+  const localOrigin = Array.isArray(origin) ? origin : [0, 0, 0];
+  let characterMatrix = null;
+  if (character) {
+    try {
+      const matrix = SDK?.avatar?.characterAccessoryMatrix?.(character, boneName);
+      characterMatrix = matrix?.isMatrix4 ? matrix.clone()
+        : (Array.isArray(matrix) || ArrayBuffer.isView(matrix)) && matrix.length === 16 ? new THREE.Matrix4().fromArray(matrix)
+          : null;
+    } catch (error) {
+      console.warn(`No se pudo ajustar el accesorio Boxity al hueso ${boneName}.`, error);
+    }
+  }
+  const matrix = restInverses.get(boneName)?.clone() || new THREE.Matrix4();
+  if (character) {
+    const anchor = character.rig?.anchors?.[boneName];
+    const anchorValues = Array.isArray(anchor) || ArrayBuffer.isView(anchor) ? anchor : [anchor?.x, anchor?.y, anchor?.z];
+    const anchorScale = anchorValues.length >= 3 && anchorValues.slice(0, 3).every(Number.isFinite)
+      ? new THREE.Matrix4().makeScale(anchorValues[0], anchorValues[1], anchorValues[2])
+      : new THREE.Matrix4();
+    const extremity = /^(Arm[LR]2_leaf|Leg[LR]2_leaf)$/.test(boneName);
+    if (extremity) {
+      matrix.copy(anchorScale).multiply(restInverses.get(boneName) || new THREE.Matrix4());
+    } else {
+      matrix.copy(characterMatrix || anchorScale);
+    }
+  } else {
+    matrix.multiply(new THREE.Matrix4().makeTranslation(...localOrigin));
+  }
+  if (character) matrix.multiply(new THREE.Matrix4().makeTranslation(...localOrigin));
+  if (mirror) matrix.multiply(new THREE.Matrix4().makeScale(-1, 1, 1));
+  attachment.matrix.copy(matrix);
+  attachment.matrixAutoUpdate = false;
+  if (slot?.inheritScale === false) {
+    root.add(attachment);
+    root.userData.boxityLooseAccessories ||= [];
+    root.userData.boxityLooseAccessories.push({ attachment, bone, local: matrix.clone() });
+  } else {
+    bone.add(attachment);
+  }
   attachment.add(accessory);
-  bone.add(attachment);
+}
+
+function updateAvatarAccessories(target) {
+  const root = target?.userData.avatarScene;
+  const accessories = root?.userData.boxityLooseAccessories;
+  if (!accessories?.length) return;
+  root.updateMatrixWorld(true);
+  const rootInverse = root.matrixWorld.clone().invert();
+  accessories.forEach(({ attachment, bone, local }) => {
+    const position = bone.getWorldPosition(new THREE.Vector3());
+    const rotation = bone.getWorldQuaternion(new THREE.Quaternion());
+    const boneTransform = new THREE.Matrix4().compose(position, rotation, new THREE.Vector3(1, 1, 1));
+    attachment.matrix.copy(rootInverse).multiply(boneTransform).multiply(local);
+  });
 }
 
 function buildConveyor() {
@@ -605,30 +920,33 @@ function weightedBrainrotIndex(boost) {
 }
 
 function setupMultiplayer() {
+  if (!multiplayer) return;
   multiplayer.onmessage = (event) => {
     if (event.data.client === clientId()) return;
     if (event.data.type === 'state') updateRemote(event.data);
     if (event.data.type === 'avatar') updateRemoteAvatar(event.data);
+    if (event.data.type === 'emote') playEmote(remotePlayers.get(event.data.client), event.data.id, false);
   };
-  const room = 'brainrot-public-room';
-  SDK?.game?.updateRoom?.(room);
   multiplayer.postMessage({ type: 'state', client: clientId(), name: currentUser(), x: player.position.x, y: player.position.y, z: player.position.z });
 }
 
 function clientId() {
-  if (!sessionStorage.getItem('brainrot-client-id')) sessionStorage.setItem('brainrot-client-id', crypto.randomUUID());
+  if (!sessionStorage.getItem('brainrot-client-id')) {
+    const id = crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    sessionStorage.setItem('brainrot-client-id', id);
+  }
   return sessionStorage.getItem('brainrot-client-id');
 }
 
 function announceAvatarProfile() {
-  if (!boxityAvatarProfile) return;
+  if (!boxityAvatarProfile || !multiplayer) return;
   multiplayer.postMessage({
     type: 'avatar',
     client: clientId(),
     name: currentUser(),
     avatar: boxityAvatarProfile,
     outfitKey: boxityOutfitKey || player.userData.outfitKey,
-    playerId: currentIdentity()?.userId || currentIdentity()?.id || currentIdentity()?.username,
+    playerId: currentIdentity()?._id || currentIdentity()?.userId || currentIdentity()?.id || currentIdentity()?.username,
     x: player.position.x,
     y: player.position.y,
     z: player.position.z,
@@ -643,7 +961,7 @@ function updateRemote(data) {
     scene.add(mesh);
     remotePlayers.set(data.client, mesh);
   }
-  mesh.position.set(data.x, data.y, data.z);
+  if (Number.isFinite(data.x) && Number.isFinite(data.z)) mesh.position.set(data.x, data.y || 0, data.z);
   mesh.rotation.y = data.rotation || 0;
 }
 
@@ -660,65 +978,28 @@ async function updateRemoteAvatar(data) {
 }
 
 function currentIdentity() {
-  const user = SDK?.auth?.getUser?.();
-  return user || SDK?.auth?.getGuest?.() || null;
+  return SDK?.auth?.getUser?.() || SDK?.auth?.getGuest?.() || null;
 }
 
 function currentUser() {
   const identity = currentIdentity();
-  return identity?.username || identity?.displayName || localStorage.getItem('boxity-user-name') || 'Invitado';
-}
-
-async function refreshGemBalance() {
-  const balanceElement = document.getElementById('gemBalance');
-  if (!balanceElement || !SDK?.bux?.getBalance) return;
-  try {
-    const balance = await SDK.bux.getBalance();
-    balanceElement.textContent = String(balance?.gems ?? balance?.balance ?? balance ?? '—');
-  } catch (error) {
-    balanceElement.textContent = '—';
-    console.warn('No se pudo consultar el saldo de Gems de Boxity.', error);
-  }
-}
-
-async function buyVipWithGems() {
-  if (!SDK?.bux?.requestPurchase) return notify('La tienda de Gems de Boxity no está disponible');
-  const button = document.getElementById('boxityGemsButton');
-  button.disabled = true;
-  try {
-    const result = await SDK.bux.requestPurchase('vip-pass');
-    if (!result?.success) {
-      notify(result?.error || 'Compra no aprobada por Boxity');
-      return;
-    }
-    state.shieldBonus = Math.max(state.shieldBonus, 10);
-    state.vip = true;
-    save();
-    await refreshGemBalance();
-    notify('Pase VIP activado con Gems');
-  } catch (error) {
-    console.error('Falló la compra de Gems en Boxity.', error);
-    notify('No se pudo completar la compra de Gems');
-  } finally {
-    button.disabled = false;
-  }
+  return identity?.displayName || identity?.username || localStorage.getItem('boxity-user-name') || 'Invitado';
 }
 
 async function inviteBoxityFriend() {
-  if (!SDK?.social?.getFriends || !SDK?.social?.inviteFriend) {
+  if (!SDK?.social?.inviteFriend) {
     notify('Las invitaciones de Boxity no están disponibles');
     return;
   }
   try {
-    const result = await SDK.social.getFriends();
-    const friends = Array.isArray(result) ? result : result?.friends;
-    if (!Array.isArray(friends) || friends.length === 0) {
+    if (!boxityFriends.length) await loadBoxityFriends();
+    if (!boxityFriends.length) {
       notify('No hay amigos disponibles para invitar');
       return;
     }
-    const choices = friends.map((friend, index) => `${index + 1}. ${friend.displayName || friend.username || friend.id}`).join('\n');
+    const choices = boxityFriends.map((friend, index) => `${index + 1}. ${friend.displayName || friend.username || friend.id}`).join('\n');
     const selection = Number(prompt(`Elige un amigo para invitar:\n${choices}`));
-    const friend = friends[selection - 1];
+    const friend = boxityFriends[selection - 1];
     const userId = friend?.userId || friend?.id;
     if (!userId) {
       notify('Selecciona un amigo válido');
@@ -733,16 +1014,42 @@ async function inviteBoxityFriend() {
   }
 }
 
+async function loadBoxityFriends() {
+  if (!SDK?.social?.getFriends) return;
+  try {
+    const result = await SDK.social.getFriends();
+    const friends = Array.isArray(result) ? result : result?.friends;
+    boxityFriends = Array.isArray(friends) ? friends : [];
+  } catch (error) {
+    console.warn('No se pudieron cargar los amigos de Boxity.', error);
+    boxityFriends = [];
+  }
+}
+
 async function activateIncomeAd() {
+  const button = document.getElementById('boxityAdButton');
+  if (!SDK?.ads?.isAvailable?.()) {
+    button.hidden = true;
+    return;
+  }
+  button.disabled = true;
   document.documentElement.classList.add('boxity-ad-paused');
-  const rewarded = await (SDK?.ads?.showRewarded?.({ placement: 'double-income-2m' }) ||
-    SDK?.monetization?.showRewardedAd?.({ placement: 'double-income-2m' }) ||
-    Promise.resolve({ verified: false }));
-  document.documentElement.classList.remove('boxity-ad-paused');
-  if (!rewarded?.verified) return notify('Anuncio no verificado por Boxity');
-  incomeBoostUntil = Date.now() + 120000;
-  notify('Ingresos x2 por 2 minutos');
-  save();
+  try {
+    const reward = await SDK.ads.showRewarded('double-income-2m');
+    if (reward?.status !== 'completed') {
+      notify('El anuncio no se completó');
+      return;
+    }
+    incomeBoostUntil = Date.now() + 120000;
+    notify('Ingresos x2 por 2 minutos');
+    save();
+  } catch (error) {
+    console.error('Falló el anuncio recompensado de Boxity.', error);
+    notify('No se pudo completar el anuncio');
+  } finally {
+    document.documentElement.classList.remove('boxity-ad-paused');
+    button.disabled = false;
+  }
 }
 
 function bindEvents() {
@@ -752,7 +1059,6 @@ function bindEvents() {
   document.querySelectorAll('[data-shop]').forEach((button) => button.onclick = () => buyUpgrade(button.dataset.shop));
   document.querySelectorAll('[data-rebirth]').forEach((button) => button.onclick = () => rebirth(+button.dataset.rebirth));
   document.getElementById('laserShieldButton').onclick = toggleShield;
-  document.getElementById('boxityGemsButton').onclick = buyVipWithGems;
   document.getElementById('boxityInviteButton').onclick = inviteBoxityFriend;
   document.getElementById('boxityAdButton').onclick = activateIncomeAd;
   document.addEventListener('keydown', (event) => {
@@ -761,7 +1067,7 @@ function bindEvents() {
     if (event.code === 'KeyR') togglePanel('rebirth');
     if (event.code === 'Escape') {
       document.exitPointerLock?.();
-      SDK?.portal?.showMenu?.(true);
+      SDK?.portal?.showMenu?.({ lockCursorOnResume: true });
     }
 
   });
@@ -777,7 +1083,9 @@ function bindEvents() {
   renderer.domElement.addEventListener('click', (event) => {
     if (!event.target.closest?.('button')) renderer.domElement.requestPointerLock();
   });
-  document.addEventListener('mousedown', (event) => { if (event.button === 0) hit(); });
+  renderer.domElement.addEventListener('pointerdown', (event) => {
+    if (event.pointerType === 'mouse' && event.button === 0) hit();
+  });
   bindTouch();
   addEventListener('resize', resize);
 }
@@ -814,19 +1122,20 @@ function resize() {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  placeHud();
 }
 
 function updateCamera(alpha = .14) {
   if (!player || !camera) return;
-  const distance = 18;
+  const distance = 13.5;
   const horizontalDistance = distance * Math.cos(pitch);
   const targetPosition = new THREE.Vector3(
     player.position.x - Math.sin(yaw) * horizontalDistance,
-    player.position.y + 4 + distance * Math.sin(-pitch),
+    player.position.y + 3.5 + distance * Math.sin(-pitch),
     player.position.z + Math.cos(yaw) * horizontalDistance
   );
   const forward = new THREE.Vector3(Math.sin(yaw), 0, -Math.cos(yaw));
-  const lookTarget = player.position.clone().addScaledVector(forward, 11).add(new THREE.Vector3(0, 1.5, 0));
+  const lookTarget = player.position.clone().addScaledVector(forward, 7).add(new THREE.Vector3(0, 1.5, 0));
   camera.position.lerp(targetPosition, alpha);
   camera.lookAt(lookTarget);
 }
@@ -849,21 +1158,28 @@ function updateMovement(dt) {
   const next = player.position.clone().add(new THREE.Vector3(dx, 0, dz));
   if (next.length() < 47) player.position.copy(next);
   if (length) player.rotation.y = Math.atan2(dx, dz);
-  if (length) animateWalk(performance.now() / 120);
+  if (length) {
+    stopEmote(player);
+    animateWalk(performance.now() / 120);
+  }
   else stopWalk();
 
   jumpVelocity -= 20 * dt;
   player.position.y += jumpVelocity * dt;
+  if (player.position.y < -2) {
+    resetCharacter(true);
+    return;
+  }
   if (player.position.y <= 0) { player.position.y = 0; jumpVelocity = 0; grounded = true; }
 
   updateCamera(Math.min(1, dt * 10));
-  multiplayer.postMessage({ type: 'state', client: clientId(), name: currentUser(), x: player.position.x, y: player.position.y, z: player.position.z, rotation: player.rotation.y });
+  multiplayer?.postMessage({ type: 'state', client: clientId(), name: currentUser(), x: player.position.x, y: player.position.y, z: player.position.z, rotation: player.rotation.y });
 }
 
 function animateWalk(time) {
   const action = player.userData.walkAction;
   if (action) {
-    if (!action.isRunning()) action.reset().fadeIn(.15).play();
+    if (!action.isRunning() || action.getEffectiveWeight() < .01) action.reset().fadeIn(.15).play();
     return;
   }
   const parts = player.userData.parts;
@@ -880,11 +1196,126 @@ function stopWalk() {
   if (action?.isRunning()) action.fadeOut(.15);
 }
 
-function animateEmote() {
-  const arm = player.userData.parts?.leftArm || player.getObjectByName('ArmL2_leaf');
-  if (!arm) return;
-  arm.rotation.z = 2.5;
-  setTimeout(() => { arm.rotation.z = 0; }, 900);
+async function loadEmoteCatalog() {
+  if (emoteCatalogRequested) return;
+  const apiUrl = boxityEnvironment?.apiUrl || SDK?.environment?.()?.apiUrl;
+  if (!apiUrl) return;
+  emoteCatalogRequested = true;
+  emoteCatalogLoading = true;
+  try {
+    const response = await fetch(`${apiUrl.replace(/\/$/, '')}/v1/avatar/emotes`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const result = await response.json();
+    emoteCatalog = Array.isArray(result) ? result : Array.isArray(result?.emotes) ? result.emotes : [];
+    emoteCatalogLoading = false;
+    pendingEmotes.splice(0).forEach(({ target, data, replicate }) => playEmote(target, data, replicate));
+  } catch (error) {
+    emoteCatalogLoading = false;
+    pendingEmotes.length = 0;
+    console.warn('No se pudo cargar el catálogo de emotes de Boxity.', error);
+  }
+}
+
+function playEmote(target, eventData, replicate = true) {
+  const id = typeof eventData === 'string' ? eventData : eventData?.emoteId || eventData?.id;
+  if (!target || typeof id !== 'string') return;
+  const emote = emoteCatalog.find((entry) => entry?.id === id);
+  if (!emote) {
+    if (emoteCatalogLoading) pendingEmotes.push({ target, data: eventData, replicate });
+    return;
+  }
+  stopEmote(target);
+  if (replicate) multiplayer?.postMessage({ type: 'emote', client: clientId(), id });
+  target.userData.walkAction?.fadeOut(.1);
+
+  const emoteName = typeof emote.name === 'string' ? emote.name.toLowerCase() : '';
+  const namedClip = target.userData.animations?.find((clip) => typeof clip.name === 'string' && clip.name.toLowerCase() === emoteName);
+  if (namedClip && target.userData.mixer) {
+    const action = target.userData.mixer.clipAction(namedClip);
+    const loop = Boolean(emote.clip?.loop);
+    action.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, loop ? Infinity : 1);
+    action.clampWhenFinished = !loop;
+    action.reset().fadeIn(.1).play();
+    target.userData.emoteAction = action;
+    if (!loop) {
+      window.setTimeout(() => {
+        if (target.userData.emoteAction === action) {
+          action.fadeOut(.1);
+          target.userData.emoteAction = null;
+        }
+      }, namedClip.duration * 1000);
+    }
+    return;
+  }
+  if (emote.clip?.tracks) {
+    const tracks = Object.entries(emote.clip.tracks).map(([boneName, keys]) => {
+      const bone = target.getObjectByName(boneName);
+      const validKeys = Array.isArray(keys) && keys.every((key) => Array.isArray(key) && key.length >= 4 && key.slice(0, 4).every(Number.isFinite));
+      return bone && validKeys && keys.length
+        ? { bone, keys, bind: bone.quaternion.clone() }
+        : null;
+    }).filter(Boolean);
+    if (tracks.length) {
+      const len = Number.isFinite(emote.clip.len) && emote.clip.len > 0
+        ? emote.clip.len
+        : Math.max(...tracks.flatMap(({ keys }) => keys.map(([time]) => time)));
+      target.userData.activeEmote = { tracks, elapsed: 0, len, loop: Boolean(emote.clip.loop) };
+      return;
+    }
+  }
+  if (/wave|hello|greet/i.test(emoteName) && target.userData.parts?.leftArm) {
+    target.userData.emoteWave = { arm: target.userData.parts.leftArm, elapsed: 0 };
+  }
+}
+
+function stopEmote(target) {
+  if (!target) return;
+  target.userData.emoteAction?.fadeOut(.1);
+  target.userData.emoteAction = null;
+  target.userData.activeEmote?.tracks.forEach(({ bone, bind }) => bone.quaternion.copy(bind));
+  target.userData.activeEmote = null;
+  if (target.userData.emoteWave) target.userData.emoteWave.arm.rotation.z = 0;
+  target.userData.emoteWave = null;
+}
+
+function updateEmotes(dt) {
+  const targets = [player, ...remotePlayers.values()].filter(Boolean);
+  for (const target of targets) {
+    const active = target.userData.activeEmote;
+    if (active) {
+      active.elapsed += dt;
+      const time = active.loop && active.len > 0 ? active.elapsed % active.len : Math.min(active.elapsed, active.len);
+      const blend = Math.min(1, active.elapsed / .1);
+      active.tracks.forEach(({ bone, keys, bind }) => {
+        let before = keys[0], after = keys[keys.length - 1];
+        for (let index = 1; index < keys.length; index++) {
+          if (time <= keys[index][0]) {
+            before = keys[index - 1];
+            after = keys[index];
+            break;
+          }
+        }
+        const span = after[0] - before[0];
+        const progress = span > 0 ? THREE.MathUtils.clamp((time - before[0]) / span, 0, 1) : 0;
+        const smooth = progress * progress * (3 - 2 * progress);
+        const delta = new THREE.Euler(
+          THREE.MathUtils.degToRad(THREE.MathUtils.lerp(before[1], after[1], smooth)),
+          THREE.MathUtils.degToRad(THREE.MathUtils.lerp(before[2], after[2], smooth)),
+          THREE.MathUtils.degToRad(THREE.MathUtils.lerp(before[3], after[3], smooth)),
+          'XYZ'
+        );
+        const targetRotation = bind.clone().multiply(new THREE.Quaternion().setFromEuler(delta));
+        bone.quaternion.copy(bind).slerp(targetRotation, blend);
+      });
+      if (!active.loop && active.elapsed >= active.len) stopEmote(target);
+    }
+    if (target.userData.emoteWave) {
+      const wave = target.userData.emoteWave;
+      wave.elapsed += dt;
+      wave.arm.rotation.z = 2.5 + Math.sin(wave.elapsed * 16) * .18;
+      if (wave.elapsed >= .9) stopEmote(target);
+    }
+  }
 }
 
 function interact() {
@@ -938,14 +1369,18 @@ function stealPedestal(target) {
   if (carrying) return;
   const stolen = target.slot.brainrot;
   target.slot.brainrot = null;
+  carriedFromSlot = target.slot;
   carrying = makeBrainrot(stolen || BRAINROTS.find((item) => item.id === state.slots[0]) || BRAINROTS[0]);
   carrying.position.set(0, 2.3, .7);
   player.add(carrying);
+  state.steals = (state.steals || 0) + 1;
   stealProgress = 0;
   document.querySelector('.shield-status')?.classList.add('danger');
-  multiplayer.postMessage({ type: 'theft', client: clientId(), x: player.position.x, z: player.position.z });
+  multiplayer?.postMessage({ type: 'theft', client: clientId(), x: player.position.x, z: player.position.z });
+  scheduleLeaderboardSync();
   notify('¡Alarma! Llevaste un Brainrot');
   sound('alarm');
+  save();
 }
 
 function transferToOwnBase() {
@@ -956,9 +1391,20 @@ function transferToOwnBase() {
   state.slots.push(definition.id);
   player.remove(carrying);
   carrying = null;
+  carriedFromSlot = null;
   notify('Robo entregado en tu base');
   sound('buy');
   save();
+}
+
+function dropCarriedBrainrot() {
+  if (!carrying || !player) return;
+  player.remove(carrying);
+  carrying.position.copy(player.position).add(new THREE.Vector3(0, .2, .8));
+  scene.add(carrying);
+  conveyorItems.push(carrying);
+  carrying = null;
+  carriedFromSlot = null;
 }
 
 function hit() {
@@ -968,9 +1414,12 @@ function hit() {
   const range = 3.5;
   bots.forEach((bot) => {
     if (bot.mesh.position.distanceTo(player.position) < range && bot.carrying) {
-      bot.carrying.position.copy(bot.base.slots.find((slot) => !slot.brainrot)?.position || bot.base.x);
+      const slot = bot.base.slots.find((candidate) => !candidate.brainrot);
+      if (slot) {
+        slot.brainrot = bot.carrying.userData.definition;
+        scene.remove(bot.carrying);
+      }
       bot.carrying = null;
-      bot.mesh.position.add(new THREE.Vector3((Math.random() - .5) * 2, 3, (Math.random() - .5) * 2));
       notify('Ladrón golpeado · Brainrot devuelto');
     }
   });
@@ -1016,12 +1465,14 @@ function rebirth(level) {
   ];
   if (level !== state.rebirth + 1 || !requirements[level - 1]) return notify('Requisitos de Rebirth incompletos');
   state.rebirth = level;
+  state.rebirths = (state.rebirths || 0) + 1;
   state.money = [250, 1000, 5000][level - 1];
   state.slots = [];
   bases[0].slots.forEach((slot) => slot.brainrot = null);
   renderRebirth();
   notify(`Rebirth x${[1.5, 2, 3][level - 1]} completado`);
   sound('rebirth');
+  scheduleLeaderboardSync();
   save();
 }
 
@@ -1046,21 +1497,48 @@ function togglePanel(id, visible = undefined) {
   const panel = document.getElementById(id);
   if (!panel) return;
   const nextVisible = visible === undefined ? panel.classList.contains('hidden') : visible;
+  if (nextVisible) {
+    document.querySelectorAll('.panel:not(.hidden)').forEach((openPanel) => {
+      if (openPanel !== panel) openPanel.classList.add('hidden');
+    });
+  }
   panel.classList.toggle('hidden', !nextVisible);
-  if (nextVisible) SDK?.game?.reportUI?.(id === 'rebirth' ? 'Rebirth' : id === 'shop' ? 'Shop' : id);
-  if (nextVisible) SDK?.stats?.increment?.('ui_opened', 1, { screen: id });
+  if (nextVisible) {
+    SDK?.game?.reportUI?.(id === 'rebirth' ? 'Rebirth' : id === 'shop' ? 'Shop' : id);
+    setAdScreen('panel');
+  } else if (!document.querySelector('.panel:not(.hidden)')) {
+    setAdScreen('gameplay');
+  }
+}
+
+function setAdScreen(screen) {
+  SDK?.ads?.screen?.(screen);
 }
 
 function updateBots(dt) {
   if (Date.now() < botTick) return;
   botTick = Date.now() + 3500;
   bots.forEach((bot) => {
+    if (bot.mesh.position.distanceTo(player.position) < 3 && Date.now() >= (bot.nextStunAt || 0)) {
+      bot.nextStunAt = Date.now() + 2000;
+      stunnedUntil = Date.now() + 900;
+      dropCarriedBrainrot();
+      notify('Te aturdieron · Brainrot soltado');
+      sound('hit');
+    }
     const available = conveyorItems.find((item) => item.position.distanceTo(bot.mesh.position) < 14);
     if (!available || bot.carrying) return;
     bot.carrying = available;
     conveyorItems.splice(conveyorItems.indexOf(available), 1);
-    available.position.copy(bot.base.slots.find((slot) => !slot.brainrot)?.position || bot.mesh.position);
-    bot.base.slots.find((slot) => !slot.brainrot) && (bot.base.slots.find((slot) => !slot.brainrot).brainrot = available.userData.definition);
+    const slot = bot.base.slots.find((candidate) => !candidate.brainrot);
+    if (!slot) {
+      bot.carrying = null;
+      return;
+    }
+    available.position.copy(slot.position);
+    slot.brainrot = available.userData.definition;
+    scene.remove(available);
+    bot.carrying = null;
     sound('buy');
   });
   updateBotPositions(dt);
@@ -1146,22 +1624,61 @@ function sound(type) {
 }
 
 function animate() {
-  requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), .05);
-  updateMovement(dt);
-  player?.userData.mixer?.update(dt);
-  remotePlayers.forEach((remote) => remote.userData.mixer?.update(dt));
-  updateConveyor(dt);
-  updateBots(dt);
-  updateHUD();
-  const second = Math.floor(performance.now() / 1000);
-  if (second !== lastIncomeTick) {
-    state.money = Math.min(MONEY_LIMIT, state.money + income());
-    lastIncomeTick = second;
-    if (income()) { sound('coin'); save(); }
+  if (!pausedForAd) {
+    updateMovement(dt);
+    player?.userData.mixer?.update(dt);
+    remotePlayers.forEach((remote) => remote.userData.mixer?.update(dt));
+    updateAvatarAccessories(player);
+    remotePlayers.forEach(updateAvatarAccessories);
+    updateEmotes(dt);
+    updateConveyor(dt);
+    updateBots(dt);
+    updateHUD();
+    const second = Math.floor(performance.now() / 1000);
+    if (second !== lastIncomeTick) {
+      const earned = Math.min(MONEY_LIMIT - state.money, income());
+      state.money = Math.min(MONEY_LIMIT, state.money + earned);
+      state.moneyEarned = Math.min(MONEY_LIMIT, (state.moneyEarned || 0) + earned);
+      lastIncomeTick = second;
+      if (earned > 0) {
+        sound('coin');
+        scheduleLeaderboardSync();
+        save();
+      }
+    }
   }
   renderer.render(scene, camera);
+  if (!firstFrameRendered) {
+    firstFrameRendered = true;
+    finishLoading();
+  }
+  requestAnimationFrame(animate);
 }
 
-init();
-window.addEventListener('pagehide', () => SDK?.game?.gameplayEnd?.());
+function bootGame() {
+  try {
+    init();
+  } catch (error) {
+    console.error('No se pudo iniciar Roba un Brainrot.', error);
+    const notification = document.getElementById('notification');
+    notification.textContent = 'No se pudo iniciar el juego. Recarga la página para volver a intentarlo.';
+    notification.classList.add('show');
+    firstFrameRendered = true;
+    finishLoading();
+  }
+}
+
+window.addEventListener('boxity-sdk-ready', initializeBoxity);
+bootGame();
+window.addEventListener('pagehide', () => {
+  if (leaderboardTimer) {
+    clearTimeout(leaderboardTimer);
+    leaderboardTimer = 0;
+  }
+  submitLeaderboardScores();
+  unsubscribePlayerEvents?.();
+  multiplayer?.close();
+  SDK?.ads?.hideScreen?.();
+  SDK?.game?.gameplayEnd?.();
+});

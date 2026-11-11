@@ -5,20 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
   <title>Roba un Brainrot 3D</title>
   <link rel="stylesheet" href="style.css">
-  <link rel="preconnect" href="https://bloxity.io">
-  <script src="https://sdk.bloxity.io/v1/legion-sdk.min.js"></script>
-  <script>
-    if (window.Legion?.SDK) {
-      if (!window.__brainrotSdkInitialized) {
-        window.__brainrotSdkInitialized = true;
-        window.Legion.SDK.init({ gameSlug: 'roba-un-brainrot' });
-      }
-      if (!window.__brainrotLoadingEnded) {
-        window.__brainrotLoadingEnded = true;
-        window.Legion.SDK.game?.loadingEnd?.();
-      }
-    }
-  </script>
+  <link rel="preconnect" href="https://sdk.bloxity.io">
+  <script async src="https://sdk.bloxity.io/v1/legion-sdk.min.js" onload="window.dispatchEvent(new Event('boxity-sdk-ready'))"></script>
 </head>
 <body>
   <div id="game"></div>
@@ -34,8 +22,7 @@
         <button id="shopButton">TIENDA</button>
         <button id="rebirthButton">RENA CER</button>
         <button id="boxityInviteButton">INVITAR AMIGO</button>
-        <button id="boxityGemsButton">PASE VIP · <span id="gemBalance">…</span> GEMAS</button>
-        <button id="boxityAdButton">ANUNCIO X2 · 2 MIN</button>
+        <button id="boxityAdButton" hidden>ANUNCIO X2 · 2 MIN</button>
       </div>
     </section>
     <button id="laserShieldButton" class="laser-shield-button">ESCUDO LÁSER · X</button>
