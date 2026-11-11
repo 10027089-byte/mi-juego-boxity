@@ -231,15 +231,18 @@ function buildWorld() {
   ground.userData.boxityMaterial = 'ground';
   ground.receiveShadow = true;
   scene.add(ground);
-  const roadVertical = box(8, .4, 46, '#d7d2c3', 0, 0);
-  const roadHorizontal = box(46, .3, 5, '#c8c1ae', 0, 0);
-  roadVertical.userData.boxityMaterial = 'road';
-  roadHorizontal.userData.boxityMaterial = 'road';
-  box(.15, .08, 42, '#fff08b', 0, 0);
-  for (let z = -20; z <= 20; z += 8) box(.08, .07, 3, '#fff08b', 0, z);
+  const avenue = box(14, .3, 78, '#c8c1ae', 0, 0);
+  avenue.userData.boxityMaterial = 'road';
+  box(.18, .08, 70, '#fff08b', 0, 0);
+  for (let z = -34; z <= 34; z += 8) box(.08, .07, 3, '#fff08b', 0, z);
 
-  const angles = [-150, -90, -30, 30, 90, 150];
-  angles.forEach((angle, index) => buildBase(index, THREE.MathUtils.degToRad(angle)));
+  const baseRows = [-27, -9, 9, 27];
+  baseRows.forEach((z, row) => {
+    buildBase(row, -17, z);
+    buildBase(row + baseRows.length, 17, z);
+    box(3.5, .12, 4, '#d7d2c3', -8.75, z);
+    box(3.5, .12, 4, '#d7d2c3', 8.75, z);
+  });
 
   for (let i = 0; i < 18; i++) {
     const angle = i / 18 * Math.PI * 2;
@@ -289,20 +292,21 @@ async function applyBoxityWorldMaterials() {
   }));
 }
 
-function buildBase(index, angle) {
-  const radius = 34;
-  const x = Math.cos(angle) * radius;
-  const z = Math.sin(angle) * radius;
-  const platform = box(16, .7, 16, index === 0 ? '#4bd9df' : '#dfe5eb', x, z);
+function buildBase(index, x, z) {
+  const side = Math.sign(x);
+  const color = ['#4bd9df', '#ff7b78', '#ffd166', '#b48cff', '#66d982', '#ff9f43', '#6c9dff', '#f26cc2'][index];
+  const platform = box(13, .7, 14, color, x, z);
   platform.userData.boxityMaterial = 'base';
-  platform.rotation.y = -angle;
-  const base = { index, x, z, angle, owner: index === 0 ? currentUser() : `Jugador Bot ${index}`, slots: [], shieldUntil: index === 0 ? Date.now() + 45000 : 0, owned: false };
+  box(.5, 3, 13.5, '#28354b', x + side * 6.25, z);
+  box(13, 2.2, .4, '#34445c', x, z - 6.8);
+  box(13, 2.2, .4, '#34445c', x, z + 6.8);
+  const base = { index, x, z, angle: side === -1 ? 0 : Math.PI, side, owner: index === 0 ? currentUser() : `Jugador Bot ${index}`, slots: [], shieldUntil: index === 0 ? Date.now() + 45000 : 0, owned: false };
   const sign = makeLabel(base.owner);
-  sign.position.set(x, 5.5, z);
+  sign.position.set(x, 4.8, z);
   scene.add(sign);
   base.sign = sign;
 
-  const shield = new THREE.Mesh(new THREE.BoxGeometry(16.5, 5, 16.5), new THREE.MeshPhysicalMaterial({ color: '#53e4ff', transparent: true, opacity: .12, wireframe: true }));
+  const shield = new THREE.Mesh(new THREE.BoxGeometry(13.5, 5, 14.5), new THREE.MeshPhysicalMaterial({ color: '#53e4ff', transparent: true, opacity: .12, wireframe: true }));
   shield.userData.boxityMaterial = 'shield';
   shield.position.set(x, 3, z);
   shield.visible = false;
@@ -343,6 +347,35 @@ function makeLabel(text, color = '#ffffff') {
   return sprite;
 }
 
+function makeBrainrotLabel(definition) {
+  const rarity = RARITIES[definition.rarity];
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 192;
+  const context = canvas.getContext('2d');
+  context.fillStyle = 'rgba(12,18,32,.94)';
+  context.roundRect(8, 8, 496, 176, 20);
+  context.fill();
+  context.lineWidth = 8;
+  context.strokeStyle = rarity.color;
+  context.stroke();
+  context.textAlign = 'center';
+  context.font = '800 34px Arial';
+  context.fillStyle = '#ffffff';
+  context.fillText(definition.name, 256, 52, 460);
+  context.font = '800 29px Arial';
+  context.fillStyle = rarity.color;
+  context.fillText(rarity.name, 256, 94);
+  context.font = '700 24px Arial';
+  context.fillStyle = '#ffe347';
+  context.fillText(`COMPRA ${money(definition.price)}`, 256, 132);
+  context.fillStyle = '#8df3c4';
+  context.fillText(`+${money(definition.income)}/s`, 256, 166);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false }));
+  sprite.scale.set(8.5, 3.2, 1);
+  return sprite;
+}
+
 function makeCharacter(name, color = '#ffd147', bot = false) {
   const group = new THREE.Group();
   const material = new THREE.MeshStandardMaterial({ color });
@@ -372,15 +405,15 @@ function makeCharacter(name, color = '#ffd147', bot = false) {
 
 function buildPlayer() {
   player = makeCharacter(currentUser(), '#ffd147');
-  player.position.set(18, 0, 0);
+  player.position.set(bases[0].x, 0, bases[0].z);
+  player.rotation.y = Math.PI / 2;
   scene.add(player);
 }
 
 function buildBots() {
-  const colors = ['#65aaff', '#ff6d8d', '#9ce060', '#c090ff', '#55d4c2'];
-  for (let i = 1; i < 6; i++) {
-    const bot = makeCharacter(`Bot ${i}`, colors[i - 1], true);
-    bot.position.set(bases[i].x + (i % 2 ? -3 : 3), 0, bases[i].z);
+  for (let i = 1; i < bases.length; i++) {
+    const bot = makeCharacter(`Bot ${i}`, '#65aaff', true);
+    bot.position.set(bases[i].x, 0, bases[i].z);
     scene.add(bot);
     bots.push({ mesh: bot, base: bases[i], target: null, nextAction: 0 + i * 650, carrying: null });
   }
@@ -400,11 +433,11 @@ async function loadRealAvatar() {
 }
 
 function buildConveyor() {
-  const belt = new THREE.Mesh(new THREE.BoxGeometry(7, .35, 42), new THREE.MeshStandardMaterial({ color: '#e94459', roughness: .45 }));
+  const belt = new THREE.Mesh(new THREE.BoxGeometry(6, .35, 70), new THREE.MeshStandardMaterial({ color: '#e94459', roughness: .45 }));
   belt.userData.boxityMaterial = 'conveyor';
   belt.position.y = .18; scene.add(belt);
-  for (let z = -19; z <= 19; z += 4) {
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(7.1, .05, .16), new THREE.MeshBasicMaterial({ color: '#ff9aa6' }));
+  for (let z = -33; z <= 33; z += 4) {
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(6.1, .05, .16), new THREE.MeshBasicMaterial({ color: '#ff9aa6' }));
     stripe.position.set(0, .42, z); scene.add(stripe);
   }
   spawnConveyorItem(true);
@@ -417,7 +450,7 @@ function makeBrainrot(definition) {
     color: definition.color,
     roughness: .42,
     emissive: RARITIES[definition.rarity].color,
-    emissiveIntensity: definition.rarity === 'mythical' ? .42 : .12
+    emissiveIntensity: ['mythical', 'secret'].includes(definition.rarity) ? .42 : .12
   });
   const body = new THREE.Mesh(new THREE.CapsuleGeometry(.62, .65, 5, 10), material);
   body.position.y = .9; body.castShadow = true; group.add(body);
@@ -431,7 +464,7 @@ function makeBrainrot(definition) {
     const foot = new THREE.Mesh(new THREE.BoxGeometry(.28, .28, .48), material);
     foot.position.set(x, .2, 0); group.add(foot);
   });
-  const tag = makeLabel(`${definition.name} · ${RARITIES[definition.rarity].name} · ${money(definition.price)} · +${money(definition.income)}/s`, RARITIES[definition.rarity].color);
+  const tag = makeBrainrotLabel(definition);
   tag.position.y = 2.55; group.add(tag);
   group.userData.definition = definition;
   scene.add(group);
@@ -441,17 +474,19 @@ function makeBrainrot(definition) {
 function spawnConveyorItem(initial = false) {
   const index = weightedBrainrotIndex(initial ? 1 : 0);
   const item = makeBrainrot(BRAINROTS[index]);
-  item.position.set((Math.random() - .5) * 4.2, .5, initial ? -18 : -21);
+  item.position.set((Math.random() - .5) * 3.5, .5, -33);
   conveyorItems.push(item);
 }
 
 function weightedBrainrotIndex(boost) {
   const roll = Math.random();
-  if (roll < .04 + boost * .01) return 9;
-  if (roll < .15) return 7 + Math.floor(Math.random() * 2);
-  if (roll < .38) return 5 + Math.floor(Math.random() * 2);
-  if (roll < .68) return 2 + Math.floor(Math.random() * 3);
-  return Math.floor(Math.random() * 2);
+  const rarity = roll < .005 + boost * .002 ? 'secret'
+    : roll < .045 + boost * .01 ? 'mythical'
+      : roll < .15 ? 'legendary'
+        : roll < .38 ? 'epic'
+          : roll < .68 ? 'rare' : 'common';
+  const choices = BRAINROTS.filter((brainrot) => brainrot.rarity === rarity);
+  return BRAINROTS.indexOf(choices[Math.floor(Math.random() * choices.length)]);
 }
 
 function setupMultiplayer() {
@@ -818,7 +853,7 @@ function updateBots(dt) {
   if (Date.now() < botTick) return;
   botTick = Date.now() + 3500;
   bots.forEach((bot) => {
-    const available = conveyorItems.find((item) => item.position.distanceTo(bot.mesh.position) < 28);
+    const available = conveyorItems.find((item) => item.position.distanceTo(bot.mesh.position) < 14);
     if (!available || bot.carrying) return;
     bot.carrying = available;
     conveyorItems.splice(conveyorItems.indexOf(available), 1);
@@ -831,10 +866,10 @@ function updateBots(dt) {
 
 function updateBotPositions() {
   bots.forEach((bot, index) => {
-    const angle = performance.now() * .00018 + index * 1.05;
-    bot.mesh.position.x += (Math.cos(angle) * 31 - bot.mesh.position.x) * .008;
-    bot.mesh.position.z += (Math.sin(angle) * 31 - bot.mesh.position.z) * .008;
-    bot.mesh.rotation.y += .03;
+    const phase = performance.now() * .0007 + index;
+    bot.mesh.position.x = bot.base.x + Math.sin(phase) * 1.4;
+    bot.mesh.position.z = bot.base.z + Math.cos(phase) * 1.4;
+    bot.mesh.rotation.y = -bot.base.side * Math.PI / 2;
   });
 }
 
@@ -845,7 +880,7 @@ function updateConveyor(dt) {
     item.position.y = .5 + Math.sin(performance.now() * .004 + item.position.x) * .08;
   });
   for (let i = conveyorItems.length - 1; i >= 0; i--) {
-    if (conveyorItems[i].position.z > 21) {
+    if (conveyorItems[i].position.z > 35) {
       scene.remove(conveyorItems[i]);
       conveyorItems.splice(i, 1);
     }

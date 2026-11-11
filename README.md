@@ -1,6 +1,6 @@
 ## Roba un Brainrot 3D
 
-Juego web 3D para Boxity.io construido con Three.js. Incluye arena con seis bases, cinta central, diez Brainrots procedurales, bots de relleno, robo, combate, escudos, tienda, Rebirth y controles táctiles.
+Juego web 3D para Boxity.io construido con Three.js. Incluye ocho bases en dos filas de cuatro, una pasarela central con cinta transportadora y Brainrots con etiquetas flotantes de rareza, costo e ingresos. También incluye bots, robo, combate, escudos, tienda, Rebirth y controles táctiles.
 
 ### Controles
 
