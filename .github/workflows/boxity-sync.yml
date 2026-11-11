@@ -13,4 +13,5 @@ jobs:
       - run: |
           npm install
           npm run build
-          git push --force "${{ secrets.BOXITY_GIT_URL }}" HEAD:dev
+          H="mcp.bloxity.io"
+          git push --force "https://boxity:${{ secrets.BOXITY_GIT_URL }}@${H}/git/roba-un-brainrot.git" HEAD:dev
