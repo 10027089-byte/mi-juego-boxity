@@ -10,7 +10,7 @@ const saveKey = 'roba-un-brainrot-save-v2';
 const state = loadState();
 let scene, camera, renderer, clock, player, playerBat, selectedBrainrot, carrying;
 let audio, shieldUntil = 0, shieldCooldown = 0, stealProgress = 0, jumpVelocity = 0, grounded = true;
-let yaw = Math.PI / 2, pitch = -.28, lastIncomeTick = 0, botTick = 0, muted = false;
+let yaw = Math.PI / 2, pitch = -.4, lastIncomeTick = 0, botTick = 0, muted = false;
 let hitCooldown = 0, stunnedUntil = 0;
 const keys = {};
 const bots = [];
@@ -23,6 +23,7 @@ const colliders = [];
 const joystick = { x: 0, y: 0 };
 const multiplayer = new BroadcastChannel('roba-un-brainrot-v2');
 let boxityAvatarProfile = null;
+let boxityOutfitKey = null;
 let incomeBoostUntil = 0;
 let boxityEnvironment = null;
 let masterVolume = 1;
@@ -46,12 +47,18 @@ function initializeBoxity() {
     console.warn('Boxity SDK no disponible; el juego continuará sin integración de plataforma.');
     return;
   }
-  if (window.__brainrotSdkInitialized) return;
-  window.__brainrotSdkInitialized = true;
-  Legion.SDK.init({ gameSlug: 'roba-un-brainrot' });
+  if (!window.__brainrotSdkInitialized) {
+    window.__brainrotSdkInitialized = true;
+    Legion.SDK.init({ gameSlug: GAME_SLUG });
+  }
+  if (!window.__brainrotLoadingEnded) {
+    window.__brainrotLoadingEnded = true;
+    SDK.game?.loadingEnd?.();
+  }
   boxityEnvironment = SDK.environment?.() || null;
   SDK.auth?.onUserChanged?.((user) => {
-    const name = user?.username || user?.displayName || 'Jugador Boxity';
+    const identity = user || SDK.auth?.getGuest?.();
+    const name = identity?.username || identity?.displayName || 'Invitado';
     localStorage.setItem('boxity-user-name', name);
     if (player) {
       updatePlayerLabel(name);
@@ -60,7 +67,7 @@ function initializeBoxity() {
         updateLabel(bases[0].sign, name);
       }
     }
-    loadRealAvatar(SDK.avatar?.getEquipped?.());
+    loadRealAvatar(SDK.avatar?.getEquipped?.() || identity?.avatar);
   });
   SDK.onEnvironmentChanged?.((environment) => {
     boxityEnvironment = environment;
@@ -70,7 +77,7 @@ function initializeBoxity() {
   SDK.settings?.listen?.('music_volume', (value) => applyMusicVolume(value));
   SDK.settings?.listen?.('graphics_quality', (value) => setGraphicsQuality(value));
   SDK.settings?.listen?.('camera_sensitivity', (value) => cameraSensitivity = Number(value) || cameraSensitivity);
-  SDK.avatar?.onAvatarChanged?.((equipped) => loadRealAvatar(equipped || SDK.avatar?.getEquipped?.()));
+  SDK.avatar?.onAvatarChanged?.((equipped) => loadRealAvatar(equipped || SDK.avatar?.getEquipped?.() || currentIdentity()?.avatar));
   ['avatar', 'chat', 'emotes', 'settings', 'touch_controls', 'party', 'leaderboard'].forEach((feature) => SDK.game?.registerFeature?.(feature));
   SDK.party?.enable?.({ maxPartySize: 6 });
   SDK.player?.onEvent?.((event) => {
@@ -87,8 +94,6 @@ function initializeBoxity() {
   SDK.portal?.onMenu?.((open) => syncPortalMenu(open));
   SDK.player?.onReset?.(() => resetCharacter());
   SDK.game?.onResetCharacter?.(() => resetCharacter());
-  SDK.game?.loadingStep?.('Boxity environment detected');
-  SDK.game?.loadingStep?.('Preparando la arena 3D');
 }
 
 function placeHud(areas = []) {
@@ -166,11 +171,10 @@ function init() {
   buildConveyor();
   updateCamera(1);
   bindEvents();
-  loadRealAvatar(SDK?.avatar?.getEquipped?.());
+  loadRealAvatar(SDK?.avatar?.getEquipped?.() || currentIdentity()?.avatar);
   setupMultiplayer();
   refreshGemBalance();
   renderRebirth();
-  SDK?.game?.loadingEnd?.();
   SDK?.game?.gameplayStart?.();
   animate();
 }
@@ -378,17 +382,103 @@ function updatePlayerLabel(name) {
 async function loadRealAvatar(equipped = SDK?.avatar?.getEquipped?.()) {
   if (!player || !equipped || typeof equipped !== 'object') return;
   boxityAvatarProfile = equipped;
-  await applyAvatarAppearance(player, equipped, currentUser());
+  boxityOutfitKey = SDK?.avatar?.getOutfitKey?.() || null;
+  await loadOfficialAvatarModel(player, equipped, currentUser(), boxityOutfitKey);
   announceAvatarProfile();
 }
 
-async function applyAvatarAppearance(target, equipped, name) {
-  if (!target || !equipped || typeof equipped !== 'object') return;
+async function loadOfficialAvatarModel(target, equipped, name, outfitKey, remoteClient = null) {
+  if (!target || !equipped || typeof equipped !== 'object') return false;
+  const characterApi = SDK?.character;
+  const modelUrl = characterApi?.getCharacterFor?.(equipped);
+  if (typeof modelUrl !== 'string' || !modelUrl) return false;
+
   const version = (target.userData.avatarLoadVersion || 0) + 1;
   target.userData.avatarLoadVersion = version;
-  target.userData.boxityAvatar = true;
-  if (target.userData.parts?.tag) updateLabel(target.userData.parts.tag, name, '#9fffd2');
+  let gltf;
+  try {
+    gltf = await new GLTFLoader().loadAsync(modelUrl);
+  } catch (error) {
+    console.warn('No se pudo cargar el modelo oficial del avatar Boxity.', error);
+    return false;
+  }
+  if (version !== target.userData.avatarLoadVersion) return false;
 
+  const identity = currentIdentity();
+  const proportions = equipped.proportions || SDK?.avatar?.getProportions?.();
+  let dressing = null;
+  try {
+    if (outfitKey && characterApi.canDress?.(outfitKey) && characterApi.dress) {
+      dressing = await characterApi.dress({
+        root: gltf.scene,
+        GLTFLoader,
+        THREE,
+        outfitKey,
+        playerId: remoteClient || identity?.userId || identity?.id || identity?.username,
+        proportions
+      });
+    }
+  } catch (error) {
+    console.warn('No se pudo equipar el outfit oficial de Boxity; se usarán los recursos de avatar disponibles.', error);
+  }
+  if (version !== target.userData.avatarLoadVersion) {
+    dressing?.dispose?.();
+    return false;
+  }
+  if (!dressing) await applyAvatarTextureAndAccessories(gltf.scene, equipped, version, target);
+
+  const bounds = new THREE.Box3().setFromObject(gltf.scene);
+  const size = bounds.getSize(new THREE.Vector3());
+  const scale = size.y > 0 ? Math.min(1, 3 / size.y) : 1;
+  const avatarRoot = new THREE.Group();
+  avatarRoot.name = 'boxity-player-avatar';
+  avatarRoot.scale.setScalar(scale);
+  gltf.scene.position.y -= bounds.min.y;
+  avatarRoot.add(gltf.scene);
+  const tag = makeLabel(name, '#9fffd2');
+  tag.position.y = size.y + .75;
+  avatarRoot.add(tag);
+  avatarRoot.userData.parts = { tag };
+  avatarRoot.userData.boxityAvatar = true;
+  avatarRoot.userData.boxityDressing = dressing;
+  avatarRoot.userData.outfitKey = outfitKey;
+  if (gltf.animations.length) {
+    const mixer = new THREE.AnimationMixer(gltf.scene);
+    const walkClip = gltf.animations.find((clip) => /walk|run/i.test(clip.name));
+    avatarRoot.userData.mixer = mixer;
+    avatarRoot.userData.walkAction = walkClip ? mixer.clipAction(walkClip) : null;
+  }
+
+  const previousPosition = target.position.clone();
+  const previousRotation = target.rotation.clone();
+  avatarRoot.position.copy(previousPosition);
+  avatarRoot.rotation.copy(previousRotation);
+  if (target === player) {
+    if (carrying) {
+      target.remove(carrying);
+      avatarRoot.add(carrying);
+    }
+    playerBat = new THREE.Mesh(new THREE.CylinderGeometry(.09, .14, 1.2, 8), new THREE.MeshStandardMaterial({ color: '#d8a15d', metalness: .2 }));
+    playerBat.position.set(.75, size.y * .48, .3);
+    playerBat.rotation.x = -.5;
+    avatarRoot.add(playerBat);
+    player = avatarRoot;
+  } else if (remoteClient) {
+    remotePlayers.set(remoteClient, avatarRoot);
+  }
+  scene.remove(target);
+  scene.add(avatarRoot);
+  target.userData.boxityDressing?.dispose?.();
+  target.traverse((child) => {
+    if (child === target) return;
+    child.geometry?.dispose?.();
+    if (Array.isArray(child.material)) child.material.forEach((material) => material.dispose());
+    else child.material?.dispose?.();
+  });
+  return true;
+}
+
+async function applyAvatarTextureAndAccessories(root, equipped, version, target) {
   const skinUrl = SDK?.avatar?.getSkinTextureUrlFor?.(equipped);
   if (skinUrl) {
     try {
@@ -398,38 +488,24 @@ async function applyAvatarAppearance(target, equipped, name) {
         return;
       }
       texture.colorSpace = THREE.SRGBColorSpace;
-      target.traverse((child) => {
-        if (!child.isMesh || !child.userData.boxitySkin) return;
-        child.material = child.material.clone();
-        child.material.map = texture;
-        child.material.color.set('#ffffff');
-        child.material.needsUpdate = true;
+      root.traverse((child) => {
+        if (!child.isMesh) return;
+        const applyTexture = (material) => {
+          const skinned = material.clone();
+          skinned.map = texture;
+          skinned.color.set('#ffffff');
+          skinned.needsUpdate = true;
+          return skinned;
+        };
+        child.material = Array.isArray(child.material) ? child.material.map(applyTexture) : applyTexture(child.material);
       });
     } catch (error) {
       console.warn('No se pudo cargar la textura oficial del avatar Boxity.', error);
     }
   }
 
-  await loadAvatarAccessories(target, equipped, version);
-}
-
-async function loadAvatarAccessories(target, equipped, version) {
   const avatarApi = SDK?.avatar;
   const slots = avatarApi?.getAccessorySlots?.() || [];
-  const oldAccessories = target.userData.boxityAccessories;
-  if (oldAccessories) {
-    target.remove(oldAccessories);
-    oldAccessories.traverse((child) => {
-      child.geometry?.dispose?.();
-      if (Array.isArray(child.material)) child.material.forEach((material) => material.dispose());
-      else child.material?.dispose?.();
-    });
-  }
-  const accessoryRoot = new THREE.Group();
-  accessoryRoot.name = 'boxityAccessories';
-  target.add(accessoryRoot);
-  target.userData.boxityAccessories = accessoryRoot;
-
   for (const slot of slots) {
     const itemId = equipped?.[slot.field];
     if (!itemId || itemId === '-1') continue;
@@ -452,32 +528,23 @@ async function loadAvatarAccessories(target, equipped, version) {
           child.material.needsUpdate = true;
         });
       }
-      const position = accessoryPosition(slot.field);
-      const anchor = new THREE.Group();
-      anchor.name = slot.bone || slot.field;
-      anchor.position.copy(position);
-      accessoryRoot.add(anchor);
-      anchor.add(gltf.scene);
-      if (slot.mirrorBone) {
-        const mirror = anchor.clone(true);
-        mirror.name = slot.mirrorBone;
-        mirror.scale.x = -1;
-        accessoryRoot.add(mirror);
-      }
+      attachAccessoryToBone(root, gltf.scene, slot.bone, slot.origin);
+      if (slot.mirrorBone) attachAccessoryToBone(root, gltf.scene.clone(true), slot.mirrorBone, slot.origin, true);
     } catch (error) {
       console.warn(`No se pudo cargar el accesorio Boxity ${slot.field}.`, error);
     }
   }
 }
 
-function accessoryPosition(field) {
-  const positions = {
-    hatId: [0, 3.05, 0], hairId: [0, 2.85, 0], maskId: [0, 2.55, .4],
-    neckId: [0, 2.1, 0], chestId: [0, 1.65, 0], backId: [0, 1.65, -.55],
-    waistId: [0, 1.05, 0], handId: [.75, 1.55, 0], shoesId: [0, .1, 0]
-  };
-  const [x, y, z] = positions[field] || [0, 1.55, 0];
-  return new THREE.Vector3(x, y, z);
+function attachAccessoryToBone(root, accessory, boneName, origin = [0, 0, 0], mirror = false) {
+  const bone = root.getObjectByName(boneName);
+  if (!bone) return;
+  const attachment = new THREE.Group();
+  attachment.name = `boxity-${boneName}`;
+  attachment.position.fromArray(origin);
+  if (mirror) attachment.scale.x = -1;
+  attachment.add(accessory);
+  bone.add(attachment);
 }
 
 function buildConveyor() {
@@ -560,6 +627,8 @@ function announceAvatarProfile() {
     client: clientId(),
     name: currentUser(),
     avatar: boxityAvatarProfile,
+    outfitKey: boxityOutfitKey || player.userData.outfitKey,
+    playerId: currentIdentity()?.userId || currentIdentity()?.id || currentIdentity()?.username,
     x: player.position.x,
     y: player.position.y,
     z: player.position.z,
@@ -587,12 +656,17 @@ async function updateRemoteAvatar(data) {
   }
   if (Number.isFinite(data.x) && Number.isFinite(data.z)) mesh.position.set(data.x, data.y || 0, data.z);
   if (Number.isFinite(data.rotation)) mesh.rotation.y = data.rotation;
-  await applyAvatarAppearance(mesh, data.avatar, data.name || 'Jugador Boxity');
+  await loadOfficialAvatarModel(mesh, data.avatar, data.name || 'Jugador Boxity', data.outfitKey, data.playerId || data.client);
+}
+
+function currentIdentity() {
+  const user = SDK?.auth?.getUser?.();
+  return user || SDK?.auth?.getGuest?.() || null;
 }
 
 function currentUser() {
-  const user = SDK?.auth?.getUser?.();
-  return user?.username || user?.displayName || localStorage.getItem('boxity-user-name') || 'Jugador Boxity';
+  const identity = currentIdentity();
+  return identity?.username || identity?.displayName || localStorage.getItem('boxity-user-name') || 'Invitado';
 }
 
 async function refreshGemBalance() {
@@ -744,7 +818,7 @@ function resize() {
 
 function updateCamera(alpha = .14) {
   if (!player || !camera) return;
-  const distance = 12;
+  const distance = 18;
   const horizontalDistance = distance * Math.cos(pitch);
   const targetPosition = new THREE.Vector3(
     player.position.x - Math.sin(yaw) * horizontalDistance,
@@ -752,7 +826,7 @@ function updateCamera(alpha = .14) {
     player.position.z + Math.cos(yaw) * horizontalDistance
   );
   const forward = new THREE.Vector3(Math.sin(yaw), 0, -Math.cos(yaw));
-  const lookTarget = player.position.clone().addScaledVector(forward, 7).add(new THREE.Vector3(0, 1.5, 0));
+  const lookTarget = player.position.clone().addScaledVector(forward, 11).add(new THREE.Vector3(0, 1.5, 0));
   camera.position.lerp(targetPosition, alpha);
   camera.lookAt(lookTarget);
 }
@@ -776,6 +850,7 @@ function updateMovement(dt) {
   if (next.length() < 47) player.position.copy(next);
   if (length) player.rotation.y = Math.atan2(dx, dz);
   if (length) animateWalk(performance.now() / 120);
+  else stopWalk();
 
   jumpVelocity -= 20 * dt;
   player.position.y += jumpVelocity * dt;
@@ -786,19 +861,30 @@ function updateMovement(dt) {
 }
 
 function animateWalk(time) {
-  if (!player.userData.parts) return;
-  const swing = Math.sin(time) * .32;
+  const action = player.userData.walkAction;
+  if (action) {
+    if (!action.isRunning()) action.reset().fadeIn(.15).play();
+    return;
+  }
   const parts = player.userData.parts;
+  if (!parts?.leftArm) return;
+  const swing = Math.sin(time) * .32;
   parts.leftArm.rotation.x = swing;
   parts.rightArm.rotation.x = -swing;
   parts.leftLeg.rotation.x = -swing;
   parts.rightLeg.rotation.x = swing;
 }
 
+function stopWalk() {
+  const action = player?.userData.walkAction;
+  if (action?.isRunning()) action.fadeOut(.15);
+}
+
 function animateEmote() {
-  if (!player.userData.parts) return;
-  player.userData.parts.leftArm.rotation.z = 2.5;
-  setTimeout(() => { player.userData.parts.leftArm.rotation.z = 0; }, 900);
+  const arm = player.userData.parts?.leftArm || player.getObjectByName('ArmL2_leaf');
+  if (!arm) return;
+  arm.rotation.z = 2.5;
+  setTimeout(() => { arm.rotation.z = 0; }, 900);
 }
 
 function interact() {
@@ -1063,6 +1149,8 @@ function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), .05);
   updateMovement(dt);
+  player?.userData.mixer?.update(dt);
+  remotePlayers.forEach((remote) => remote.userData.mixer?.update(dt));
   updateConveyor(dt);
   updateBots(dt);
   updateHUD();
