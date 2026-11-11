@@ -10,11 +10,12 @@ const saveKey = 'roba-un-brainrot-save-v2';
 const state = loadState();
 let scene, camera, renderer, clock, player, playerBat, selectedBrainrot, carrying;
 let audio, shieldUntil = 0, shieldCooldown = 0, stealProgress = 0, jumpVelocity = 0, grounded = true;
-let yaw = 0, pitch = -.18, lastIncomeTick = 0, botTick = 0, muted = false;
+let yaw = Math.PI / 2, pitch = -.28, lastIncomeTick = 0, botTick = 0, muted = false;
 let hitCooldown = 0, stunnedUntil = 0;
 const keys = {};
 const bots = [];
 const conveyorItems = [];
+const conveyorStripes = [];
 const bases = [];
 const remotePlayers = new Map();
 const playerParts = {};
@@ -24,6 +25,7 @@ const multiplayer = new BroadcastChannel('roba-un-brainrot-v2');
 let boxityAvatarProfile = null;
 let incomeBoostUntil = 0;
 let boxityEnvironment = null;
+let masterVolume = 1;
 
 function loadState() {
   try {
@@ -37,10 +39,6 @@ function save() {
   localStorage.setItem(saveKey, JSON.stringify(state));
   SDK?.storage?.set?.(saveKey, state);
   SDK?.data?.save?.(state);
-  SDK?.leaderboard?.submit?.('wealth', state.money);
-  SDK?.stats?.increment?.('brainrot_investment', income());
-  SDK?.leaderboards?.submit?.('wealth', state.money);
-  SDK?.leaderboard?.submit?.('money', state.money);
 }
 
 function initializeBoxity() {
@@ -53,8 +51,16 @@ function initializeBoxity() {
   Legion.SDK.init({ gameSlug: 'roba-un-brainrot' });
   boxityEnvironment = SDK.environment?.() || null;
   SDK.auth?.onUserChanged?.((user) => {
-    localStorage.setItem('boxity-user-name', user?.username || user?.displayName || 'Jugador');
-    loadRealAvatar();
+    const name = user?.username || user?.displayName || 'Jugador Boxity';
+    localStorage.setItem('boxity-user-name', name);
+    if (player) {
+      updatePlayerLabel(name);
+      if (bases[0]) {
+        bases[0].owner = name;
+        updateLabel(bases[0].sign, name);
+      }
+    }
+    loadRealAvatar(SDK.avatar?.getEquipped?.());
   });
   SDK.onEnvironmentChanged?.((environment) => {
     boxityEnvironment = environment;
@@ -64,7 +70,7 @@ function initializeBoxity() {
   SDK.settings?.listen?.('music_volume', (value) => applyMusicVolume(value));
   SDK.settings?.listen?.('graphics_quality', (value) => setGraphicsQuality(value));
   SDK.settings?.listen?.('camera_sensitivity', (value) => cameraSensitivity = Number(value) || cameraSensitivity);
-  SDK.avatar?.onAvatarChanged?.(loadRealAvatar);
+  SDK.avatar?.onAvatarChanged?.((equipped) => loadRealAvatar(equipped || SDK.avatar?.getEquipped?.()));
   ['avatar', 'chat', 'emotes', 'settings', 'touch_controls', 'party', 'leaderboard'].forEach((feature) => SDK.game?.registerFeature?.(feature));
   SDK.party?.enable?.({ maxPartySize: 6 });
   SDK.player?.onEvent?.((event) => {
@@ -82,7 +88,7 @@ function initializeBoxity() {
   SDK.player?.onReset?.(() => resetCharacter());
   SDK.game?.onResetCharacter?.(() => resetCharacter());
   SDK.game?.loadingStep?.('Boxity environment detected');
-  SDK.game?.loadingStep?.('Arena y jugadores preparados');
+  SDK.game?.loadingStep?.('Preparando la arena 3D');
 }
 
 function placeHud(areas = []) {
@@ -100,7 +106,11 @@ function syncPortalMenu(open) {
 }
 
 function applyMasterVolume(value) {
-  if (audio) audio.masterGain?.gain?.setValueAtTime?.(Number(value) || 0, audio.currentTime);
+  const volume = Number(value);
+  masterVolume = Number.isFinite(volume) ? THREE.MathUtils.clamp(volume / 100, 0, 1) : 1;
+  if (audio?.masterGain) {
+    audio.masterGain.gain.setTargetAtTime(masterVolume, audio.currentTime, .02);
+  }
 }
 
 function applyMusicVolume(value) {
@@ -108,11 +118,13 @@ function applyMusicVolume(value) {
 }
 
 function setGraphicsQuality(value) {
-  renderer?.setPixelRatio?.(Math.min(devicePixelRatio, value === 'low' ? 1 : value === 'high' ? 2 : 1.5));
+  const quality = String(value).toLowerCase();
+  renderer?.setPixelRatio?.(Math.min(devicePixelRatio, quality === 'low' ? 1 : quality === 'high' || quality === 'ultra' ? 2 : 1.5));
 }
 
 function resetCharacter() {
-  player?.position?.set(0, 0, 10);
+  player?.position?.set(-9, 0, 0);
+  if (player) player.rotation.y = Math.PI / 2;
   stunnedUntil = 0;
   carrying = null;
   notify('Personaje reiniciado por Boxity');
@@ -125,62 +137,6 @@ function showDeathScreen(cause = 'golpe de rival') {
   resetCharacter();
 }
 
-function boxitySdkAssetApi() {
-  return SDK?.assets || SDK?.world || SDK?.catalog || SDK?.materials || null;
-}
-
-async function resolveBoxityAsset(path, fallbackUrl) {
-  const api = boxitySdkAssetApi();
-  if (!api) return fallbackUrl;
-  try {
-    const resolver = api.resolve || api.get || api.loadAsset;
-    if (!resolver) return fallbackUrl;
-    const result = await resolver.call(api, path);
-    return typeof result === 'string' ? result : result?.url || result?.assetUrl || fallbackUrl;
-  } catch {
-    return fallbackUrl;
-  }
-}
-
-function officialAvatarDescriptor(character = {}) {
-  return {
-    glbUrl: character.glbUrl || character.modelUrl || character.url || null,
-    textureUrl: character.textureUrl || character.skinUrl || character.materialUrl || null
-  };
-}
-
-async function loadOfficialAvatarModel(target, descriptor, name) {
-  if (!descriptor?.glbUrl || !target) return false;
-  const gltf = await new Promise((resolve, reject) => {
-    new GLTFLoader().load(descriptor.glbUrl, resolve, undefined, reject);
-  });
-  if (descriptor.textureUrl) {
-    const texture = await new Promise((resolve) => {
-      new THREE.TextureLoader().load(descriptor.textureUrl, resolve, undefined, () => resolve(null));
-    });
-    if (texture) {
-      texture.colorSpace = THREE.SRGBColorSpace;
-      gltf.scene.traverse((child) => {
-        if (!child.isMesh) return;
-        child.material = child.material.clone();
-        child.material.map = texture;
-        child.material.needsUpdate = true;
-      });
-    }
-  }
-  const root = new THREE.Group();
-  gltf.scene.scale.setScalar(1.5);
-  root.add(gltf.scene);
-  root.add(makeLabel(name));
-  root.children.at(-1).position.y = 3.55;
-  root.position.copy(target.position);
-  root.rotation.copy(target.rotation);
-  root.userData.boxityAvatar = true;
-  scene.remove(target);
-  scene.add(root);
-  return root;
-}
-
 let cameraSensitivity = 1;
 function init() {
   initializeBoxity();
@@ -191,6 +147,9 @@ function init() {
   renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
   renderer.setSize(innerWidth, innerHeight);
   renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.15;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   document.getElementById('game').appendChild(renderer.domElement);
@@ -202,13 +161,14 @@ function init() {
   scene.add(sun);
 
   buildWorld();
-  applyBoxityWorldMaterials();
   buildPlayer();
   buildBots();
   buildConveyor();
+  updateCamera(1);
   bindEvents();
-  loadRealAvatar();
+  loadRealAvatar(SDK?.avatar?.getEquipped?.());
   setupMultiplayer();
+  refreshGemBalance();
   renderRebirth();
   SDK?.game?.loadingEnd?.();
   SDK?.game?.gameplayStart?.();
@@ -231,6 +191,11 @@ function buildWorld() {
   ground.userData.boxityMaterial = 'ground';
   ground.receiveShadow = true;
   scene.add(ground);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(180, 180), new THREE.MeshStandardMaterial({ color: '#70bd52', roughness: .9 }));
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = -.03;
+  floor.receiveShadow = true;
+  scene.add(floor);
   const avenue = box(14, .3, 78, '#c8c1ae', 0, 0);
   avenue.userData.boxityMaterial = 'road';
   box(.18, .08, 70, '#fff08b', 0, 0);
@@ -257,39 +222,6 @@ function buildWorld() {
     tree.position.set(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
     scene.add(tree);
   }
-}
-
-async function applyBoxityWorldMaterials() {
-  const api = boxitySdkAssetApi();
-  if (!api) return;
-  const assets = ['ground', 'road', 'base', 'shield', 'conveyor', 'tree', 'pedestal', 'skybox'];
-  await Promise.all(assets.map(async (asset) => {
-    const url = await resolveBoxityAsset(`world/${asset}`, null);
-    if (!url) return;
-    if (asset === 'skybox') {
-      new THREE.TextureLoader().load(url, (texture) => {
-        texture.mapping = THREE.EquirectangularReflectionMapping;
-        texture.colorSpace = THREE.SRGBColorSpace;
-        scene.background = texture;
-        scene.environment = texture;
-      }, undefined, () => {});
-      return;
-    }
-    const texture = await new Promise((resolve) => {
-      new THREE.TextureLoader().load(url, resolve, undefined, () => resolve(null));
-    });
-    if (!texture) return;
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-    scene.traverse((object) => {
-      if (!object.isMesh) return;
-      let owner = object;
-      while (owner && owner.userData.boxityMaterial !== asset) owner = owner.parent;
-      if (!owner) return;
-      object.material.map = texture;
-      object.material.needsUpdate = true;
-    });
-  }));
 }
 
 function buildBase(index, x, z) {
@@ -380,8 +312,9 @@ function makeCharacter(name, color = '#ffd147', bot = false) {
   const group = new THREE.Group();
   const material = new THREE.MeshStandardMaterial({ color });
   const torso = new THREE.Mesh(new THREE.CapsuleGeometry(.5, 1, 5, 8), material);
-  torso.position.y = 1.55; torso.castShadow = true; group.add(torso);
+  torso.position.y = 1.55; torso.castShadow = true; torso.userData.boxitySkin = true; group.add(torso);
   const head = new THREE.Mesh(new THREE.SphereGeometry(.48, 12, 8), new THREE.MeshStandardMaterial({ color: '#ffc994' }));
+  head.userData.boxitySkin = true;
   head.position.y = 2.55; head.castShadow = true; group.add(head);
   [-.16, .16].forEach((x) => {
     const eye = new THREE.Mesh(new THREE.SphereGeometry(.08, 8, 6), new THREE.MeshBasicMaterial({ color: '#fff' }));
@@ -391,6 +324,7 @@ function makeCharacter(name, color = '#ffd147', bot = false) {
   playerParts.rightArm = new THREE.Mesh(new THREE.CapsuleGeometry(.12, .7, 4, 6), material);
   playerParts.leftLeg = new THREE.Mesh(new THREE.CapsuleGeometry(.16, .68, 4, 6), new THREE.MeshStandardMaterial({ color: '#27385c' }));
   playerParts.rightLeg = new THREE.Mesh(new THREE.CapsuleGeometry(.16, .68, 4, 6), new THREE.MeshStandardMaterial({ color: '#27385c' }));
+  [playerParts.leftArm, playerParts.rightArm, playerParts.leftLeg, playerParts.rightLeg].forEach((part) => { part.userData.boxitySkin = true; });
   playerParts.leftArm.position.set(-.65, 1.55, 0); playerParts.rightArm.position.set(.65, 1.55, 0);
   playerParts.leftLeg.position.set(-.24, .55, 0); playerParts.rightLeg.position.set(.24, .55, 0);
   group.add(playerParts.leftArm, playerParts.rightArm, playerParts.leftLeg, playerParts.rightLeg);
@@ -405,7 +339,7 @@ function makeCharacter(name, color = '#ffd147', bot = false) {
 
 function buildPlayer() {
   player = makeCharacter(currentUser(), '#ffd147');
-  player.position.set(bases[0].x, 0, bases[0].z);
+  player.position.set(-9, 0, 0);
   player.rotation.y = Math.PI / 2;
   scene.add(player);
 }
@@ -419,17 +353,131 @@ function buildBots() {
   }
 }
 
-async function loadRealAvatar() {
-  try {
-    const character = await SDK?.avatar?.getCharacter?.();
-    if (!character || !player) return;
-    boxityAvatarProfile = officialAvatarDescriptor(character);
-    const officialPlayer = await loadOfficialAvatarModel(player, boxityAvatarProfile, currentUser());
-    if (officialPlayer) player = officialPlayer;
-    announceAvatarProfile();
-  } catch (error) {
-    console.info('Avatar oficial de Boxity no disponible en este momento.', error?.message || error);
+function updateLabel(sprite, text, color = '#ffffff') {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 96;
+  const context = canvas.getContext('2d');
+  context.font = '800 38px Arial';
+  context.textAlign = 'center';
+  context.fillStyle = 'rgba(12,18,32,.85)';
+  context.roundRect(75, 17, 362, 62, 16);
+  context.fill();
+  context.fillStyle = color;
+  context.fillText(text, 256, 58, 340);
+  sprite.material.map?.dispose();
+  sprite.material.map = new THREE.CanvasTexture(canvas);
+  sprite.material.needsUpdate = true;
+}
+
+function updatePlayerLabel(name) {
+  const tag = player?.userData.parts?.tag;
+  if (tag) updateLabel(tag, name);
+}
+
+async function loadRealAvatar(equipped = SDK?.avatar?.getEquipped?.()) {
+  if (!player || !equipped || typeof equipped !== 'object') return;
+  boxityAvatarProfile = equipped;
+  await applyAvatarAppearance(player, equipped, currentUser());
+  announceAvatarProfile();
+}
+
+async function applyAvatarAppearance(target, equipped, name) {
+  if (!target || !equipped || typeof equipped !== 'object') return;
+  const version = (target.userData.avatarLoadVersion || 0) + 1;
+  target.userData.avatarLoadVersion = version;
+  target.userData.boxityAvatar = true;
+  if (target.userData.parts?.tag) updateLabel(target.userData.parts.tag, name, '#9fffd2');
+
+  const skinUrl = SDK?.avatar?.getSkinTextureUrlFor?.(equipped);
+  if (skinUrl) {
+    try {
+      const texture = await new THREE.TextureLoader().loadAsync(skinUrl);
+      if (version !== target.userData.avatarLoadVersion) {
+        texture.dispose();
+        return;
+      }
+      texture.colorSpace = THREE.SRGBColorSpace;
+      target.traverse((child) => {
+        if (!child.isMesh || !child.userData.boxitySkin) return;
+        child.material = child.material.clone();
+        child.material.map = texture;
+        child.material.color.set('#ffffff');
+        child.material.needsUpdate = true;
+      });
+    } catch (error) {
+      console.warn('No se pudo cargar la textura oficial del avatar Boxity.', error);
+    }
   }
+
+  await loadAvatarAccessories(target, equipped, version);
+}
+
+async function loadAvatarAccessories(target, equipped, version) {
+  const avatarApi = SDK?.avatar;
+  const slots = avatarApi?.getAccessorySlots?.() || [];
+  const oldAccessories = target.userData.boxityAccessories;
+  if (oldAccessories) {
+    target.remove(oldAccessories);
+    oldAccessories.traverse((child) => {
+      child.geometry?.dispose?.();
+      if (Array.isArray(child.material)) child.material.forEach((material) => material.dispose());
+      else child.material?.dispose?.();
+    });
+  }
+  const accessoryRoot = new THREE.Group();
+  accessoryRoot.name = 'boxityAccessories';
+  target.add(accessoryRoot);
+  target.userData.boxityAccessories = accessoryRoot;
+
+  for (const slot of slots) {
+    const itemId = equipped?.[slot.field];
+    if (!itemId || itemId === '-1') continue;
+    const urls = avatarApi.getAccessoryUrls?.(slot.field, itemId);
+    if (!urls?.mesh) continue;
+    try {
+      const gltf = await new GLTFLoader().loadAsync(urls.mesh);
+      if (version !== target.userData.avatarLoadVersion) return;
+      if (urls.texture) {
+        const texture = await new THREE.TextureLoader().loadAsync(urls.texture);
+        if (version !== target.userData.avatarLoadVersion) {
+          texture.dispose();
+          return;
+        }
+        texture.colorSpace = THREE.SRGBColorSpace;
+        gltf.scene.traverse((child) => {
+          if (!child.isMesh) return;
+          child.material = child.material.clone();
+          child.material.map = texture;
+          child.material.needsUpdate = true;
+        });
+      }
+      const position = accessoryPosition(slot.field);
+      const anchor = new THREE.Group();
+      anchor.name = slot.bone || slot.field;
+      anchor.position.copy(position);
+      accessoryRoot.add(anchor);
+      anchor.add(gltf.scene);
+      if (slot.mirrorBone) {
+        const mirror = anchor.clone(true);
+        mirror.name = slot.mirrorBone;
+        mirror.scale.x = -1;
+        accessoryRoot.add(mirror);
+      }
+    } catch (error) {
+      console.warn(`No se pudo cargar el accesorio Boxity ${slot.field}.`, error);
+    }
+  }
+}
+
+function accessoryPosition(field) {
+  const positions = {
+    hatId: [0, 3.05, 0], hairId: [0, 2.85, 0], maskId: [0, 2.55, .4],
+    neckId: [0, 2.1, 0], chestId: [0, 1.65, 0], backId: [0, 1.65, -.55],
+    waistId: [0, 1.05, 0], handId: [.75, 1.55, 0], shoesId: [0, .1, 0]
+  };
+  const [x, y, z] = positions[field] || [0, 1.55, 0];
+  return new THREE.Vector3(x, y, z);
 }
 
 function buildConveyor() {
@@ -438,7 +486,7 @@ function buildConveyor() {
   belt.position.y = .18; scene.add(belt);
   for (let z = -33; z <= 33; z += 4) {
     const stripe = new THREE.Mesh(new THREE.BoxGeometry(6.1, .05, .16), new THREE.MeshBasicMaterial({ color: '#ff9aa6' }));
-    stripe.position.set(0, .42, z); scene.add(stripe);
+    stripe.position.set(0, .42, z); scene.add(stripe); conveyorStripes.push(stripe);
   }
   spawnConveyorItem(true);
   setInterval(() => { if (conveyorItems.length < 5 && !document.hidden) spawnConveyorItem(); }, 2800);
@@ -495,12 +543,8 @@ function setupMultiplayer() {
     if (event.data.type === 'state') updateRemote(event.data);
     if (event.data.type === 'avatar') updateRemoteAvatar(event.data);
   };
-  const room = SDK?.party?.getLaunch?.()?.roomKey || 'brainrot-public-room';
+  const room = 'brainrot-public-room';
   SDK?.game?.updateRoom?.(room);
-  SDK?.matchmaking?.reportRoom?.(room);
-  SDK?.matchmaker?.reportRoom?.(room);
-  SDK?.party?.joinRoom?.(room);
-  SDK?.game?.setPartyRoom?.(room);
   multiplayer.postMessage({ type: 'state', client: clientId(), name: currentUser(), x: player.position.x, y: player.position.y, z: player.position.z });
 }
 
@@ -510,11 +554,16 @@ function clientId() {
 }
 
 function announceAvatarProfile() {
+  if (!boxityAvatarProfile) return;
   multiplayer.postMessage({
     type: 'avatar',
     client: clientId(),
     name: currentUser(),
-    avatar: boxityAvatarProfile
+    avatar: boxityAvatarProfile,
+    x: player.position.x,
+    y: player.position.y,
+    z: player.position.z,
+    rotation: player.rotation.y
   });
 }
 
@@ -530,32 +579,84 @@ function updateRemote(data) {
 }
 
 async function updateRemoteAvatar(data) {
-  if (!data.avatar?.glbUrl || remotePlayers.get(data.client)?.userData.boxityAvatar) return;
   let mesh = remotePlayers.get(data.client);
   if (!mesh) {
     mesh = makeCharacter(data.name || 'Jugador Boxity', '#68cfff', false);
     scene.add(mesh);
     remotePlayers.set(data.client, mesh);
   }
-  const avatar = await loadOfficialAvatarModel(mesh, data.avatar, data.name || 'Jugador Boxity');
-  if (!avatar) return;
-  remotePlayers.set(data.client, avatar);
+  if (Number.isFinite(data.x) && Number.isFinite(data.z)) mesh.position.set(data.x, data.y || 0, data.z);
+  if (Number.isFinite(data.rotation)) mesh.rotation.y = data.rotation;
+  await applyAvatarAppearance(mesh, data.avatar, data.name || 'Jugador Boxity');
 }
 
 function currentUser() {
   const user = SDK?.auth?.getUser?.();
-  return user?.username || user?.displayName || user?.user?.username || localStorage.getItem('boxity-user-name') || 'Jugador Boxity';
+  return user?.username || user?.displayName || localStorage.getItem('boxity-user-name') || 'Jugador Boxity';
+}
+
+async function refreshGemBalance() {
+  const balanceElement = document.getElementById('gemBalance');
+  if (!balanceElement || !SDK?.bux?.getBalance) return;
+  try {
+    const balance = await SDK.bux.getBalance();
+    balanceElement.textContent = String(balance?.gems ?? balance?.balance ?? balance ?? '—');
+  } catch (error) {
+    balanceElement.textContent = '—';
+    console.warn('No se pudo consultar el saldo de Gems de Boxity.', error);
+  }
 }
 
 async function buyVipWithGems() {
-  const result = await (SDK?.economy?.purchase?.({ currency: 'gems', amount: 25, item: 'vip-pass' }) ||
-    SDK?.commerce?.purchaseWithGems?.({ amount: 25, item: 'vip-pass' }) ||
-    Promise.resolve({ approved: false }));
-  if (!result?.approved) return notify('Compra VIP no aprobada por Boxity');
-  state.shieldBonus = Math.max(state.shieldBonus, 10);
-  state.vip = true;
-  save();
-  notify('Pase VIP activado con Gems');
+  if (!SDK?.bux?.requestPurchase) return notify('La tienda de Gems de Boxity no está disponible');
+  const button = document.getElementById('boxityGemsButton');
+  button.disabled = true;
+  try {
+    const result = await SDK.bux.requestPurchase('vip-pass');
+    if (!result?.success) {
+      notify(result?.error || 'Compra no aprobada por Boxity');
+      return;
+    }
+    state.shieldBonus = Math.max(state.shieldBonus, 10);
+    state.vip = true;
+    save();
+    await refreshGemBalance();
+    notify('Pase VIP activado con Gems');
+  } catch (error) {
+    console.error('Falló la compra de Gems en Boxity.', error);
+    notify('No se pudo completar la compra de Gems');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function inviteBoxityFriend() {
+  if (!SDK?.social?.getFriends || !SDK?.social?.inviteFriend) {
+    notify('Las invitaciones de Boxity no están disponibles');
+    return;
+  }
+  try {
+    const result = await SDK.social.getFriends();
+    const friends = Array.isArray(result) ? result : result?.friends;
+    if (!Array.isArray(friends) || friends.length === 0) {
+      notify('No hay amigos disponibles para invitar');
+      return;
+    }
+    const choices = friends.map((friend, index) => `${index + 1}. ${friend.displayName || friend.username || friend.id}`).join('\n');
+    const selection = Number(prompt(`Elige un amigo para invitar:\n${choices}`));
+    const friend = friends[selection - 1];
+    const userId = friend?.userId || friend?.id;
+    if (!userId) {
+      notify('Selecciona un amigo válido');
+      return;
+    }
+    const invitation = await SDK.social.inviteFriend(userId);
+    if (invitation?.success ?? invitation) notify('Invitación enviada por Boxity');
+    else notify(invitation?.error || 'No se pudo enviar la invitación');
+  } catch (error) {
+    console.error('Falló la invitación de Boxity.', error);
+    notify('No se pudo enviar la invitación');
+  }
 }
 
 async function activateIncomeAd() {
@@ -578,6 +679,7 @@ function bindEvents() {
   document.querySelectorAll('[data-rebirth]').forEach((button) => button.onclick = () => rebirth(+button.dataset.rebirth));
   document.getElementById('laserShieldButton').onclick = toggleShield;
   document.getElementById('boxityGemsButton').onclick = buyVipWithGems;
+  document.getElementById('boxityInviteButton').onclick = inviteBoxityFriend;
   document.getElementById('boxityAdButton').onclick = activateIncomeAd;
   document.addEventListener('keydown', (event) => {
     keys[event.code] = true;
@@ -640,6 +742,21 @@ function resize() {
   renderer.setSize(innerWidth, innerHeight);
 }
 
+function updateCamera(alpha = .14) {
+  if (!player || !camera) return;
+  const distance = 12;
+  const horizontalDistance = distance * Math.cos(pitch);
+  const targetPosition = new THREE.Vector3(
+    player.position.x - Math.sin(yaw) * horizontalDistance,
+    player.position.y + 4 + distance * Math.sin(-pitch),
+    player.position.z + Math.cos(yaw) * horizontalDistance
+  );
+  const forward = new THREE.Vector3(Math.sin(yaw), 0, -Math.cos(yaw));
+  const lookTarget = player.position.clone().addScaledVector(forward, 7).add(new THREE.Vector3(0, 1.5, 0));
+  camera.position.lerp(targetPosition, alpha);
+  camera.lookAt(lookTarget);
+}
+
 function jump() {
   if (grounded) { jumpVelocity = 7.5; grounded = false; sound('jump'); }
 }
@@ -657,15 +774,14 @@ function updateMovement(dt) {
   const dz = (right * Math.sin(yaw) - forward * Math.cos(yaw)) * speed * dt;
   const next = player.position.clone().add(new THREE.Vector3(dx, 0, dz));
   if (next.length() < 47) player.position.copy(next);
+  if (length) player.rotation.y = Math.atan2(dx, dz);
   if (length) animateWalk(performance.now() / 120);
 
   jumpVelocity -= 20 * dt;
   player.position.y += jumpVelocity * dt;
   if (player.position.y <= 0) { player.position.y = 0; jumpVelocity = 0; grounded = true; }
 
-  const distance = 9.5;
-  camera.position.lerp(new THREE.Vector3(player.position.x - Math.sin(yaw) * distance, player.position.y + 5, player.position.z - Math.cos(yaw) * distance), .14);
-  camera.lookAt(player.position.x, player.position.y + 2, player.position.z);
+  updateCamera(Math.min(1, dt * 10));
   multiplayer.postMessage({ type: 'state', client: clientId(), name: currentUser(), x: player.position.x, y: player.position.y, z: player.position.z, rotation: player.rotation.y });
 }
 
@@ -874,6 +990,10 @@ function updateBotPositions() {
 }
 
 function updateConveyor(dt) {
+  conveyorStripes.forEach((stripe) => {
+    stripe.position.z += dt * 3;
+    if (stripe.position.z > 35) stripe.position.z -= 70;
+  });
   conveyorItems.forEach((item) => item.position.z += dt * 2.5);
   conveyorItems.forEach((item) => {
     item.rotation.y += dt * .7;
@@ -920,7 +1040,12 @@ function notify(text) {
 
 function sound(type) {
   if (muted) return;
-  audio ||= new (window.AudioContext || window.webkitAudioContext)();
+  if (!audio) {
+    audio = new (window.AudioContext || window.webkitAudioContext)();
+    audio.masterGain = audio.createGain();
+    audio.masterGain.gain.value = masterVolume;
+    audio.masterGain.connect(audio.destination);
+  }
   const settings = { buy: [520, .12], hit: [110, .15], shield: [760, .25], alarm: [190, .5], coin: [880, .08], jump: [330, .08], rebirth: [1100, .55] };
   const [frequency, duration] = settings[type] || settings.coin;
   const oscillator = audio.createOscillator();
@@ -929,7 +1054,7 @@ function sound(type) {
   oscillator.type = type === 'hit' ? 'square' : 'sine';
   gain.gain.setValueAtTime(.06, audio.currentTime);
   gain.gain.exponentialRampToValueAtTime(.001, audio.currentTime + duration);
-  oscillator.connect(gain).connect(audio.destination);
+  oscillator.connect(gain).connect(audio.masterGain);
   oscillator.start();
   oscillator.stop(audio.currentTime + duration);
 }
