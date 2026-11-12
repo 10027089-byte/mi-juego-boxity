@@ -10,8 +10,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - run: |
+      - name: Build and push to Boxity
+        env:
+          BOXITY_GIT_URL: ${{ secrets.BOXITY_GIT_URL }}
+        run: |
           npm install
           npm run build
-          H="mcp.bloxity.io"
-          git push --force "https://boxity:${{ secrets.BOXITY_GIT_URL }}@${H}/git/roba-un-brainrot.git" HEAD:dev
+          if [[ "$BOXITY_GIT_URL" == https://boxity:*@mcp.bloxity.io/git/roba-un-brainrot.git ]]; then
+            PUSH_URL="$BOXITY_GIT_URL"
+          else
+            PUSH_URL="https://boxity:${BOXITY_GIT_URL}@mcp.bloxity.io/git/roba-un-brainrot.git"
+          fi
+          git push --force "$PUSH_URL" HEAD:dev
