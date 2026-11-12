@@ -111,6 +111,7 @@ function initializeBoxity() {
       return;
     }
   }
+  if (firstFrameRendered) finishLoading();
   if (typeof window.Legion.SDK.leaderboard?.define === 'function') {
     window.Legion.SDK.leaderboard.define([
       { id: 'money', label: 'Dinero acumulado', order: 'desc', mode: 'best', format: 'compact', reset: 'none' },
@@ -166,7 +167,6 @@ function initializeBoxity() {
   SDK.player?.onReset?.(() => resetCharacter());
   SDK.game?.onResetCharacter?.(() => resetCharacter());
   document.getElementById('boxityAdButton').hidden = !SDK.ads?.isAvailable?.();
-  if (firstFrameRendered) finishLoading();
   SDK.ads?.screen?.('gameplay');
   loadEmoteCatalog();
 }
@@ -1693,6 +1693,7 @@ function bootGame() {
 
 window.addEventListener('boxity-sdk-ready', initializeBoxity);
 bootGame();
+initializeBoxity();
 window.addEventListener('pagehide', () => {
   if (leaderboardTimer) {
     clearTimeout(leaderboardTimer);
