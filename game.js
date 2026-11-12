@@ -121,7 +121,9 @@ function initializeBoxity() {
   if (typeof window.Legion.SDK.game?.registerFeature === 'function') {
     window.Legion.SDK.game.registerFeature('emotes');
   }
-  SDK.ads?.declareScreens?.({ gameplay: {}, panel: {} });
+  if (typeof window.Legion.SDK.ads?.declareScreens === 'function') {
+    window.Legion.SDK.ads.declareScreens({ gameplay: {}, panel: {} });
+  }
   SDK.ads?.onBreakStart?.(pauseForAdBreak);
   SDK.ads?.onBreakEnd?.(resumeFromAdBreak);
   boxityEnvironment = SDK.environment?.() || null;
