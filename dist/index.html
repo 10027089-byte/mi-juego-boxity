@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <title>Roba un Brainrot 3D</title>
+  <link rel="preconnect" href="https://sdk.bloxity.io">
+  <script src="https://sdk.bloxity.io/v1/legion-sdk.min.js" onload="window.dispatchEvent(new Event('boxity-sdk-ready'))"></script>
+  <script type="module" crossorigin src="./assets/index-CMXESt-V.js"></script>
+  <link rel="modulepreload" crossorigin href="./assets/three-CelvaqbU.js">
+  <link rel="modulepreload" crossorigin href="./assets/three-addons-BkOV9-VJ.js">
+  <link rel="stylesheet" crossorigin href="./assets/index-Beuz_Akk.css">
+</head>
+<body>
+  <div id="game"></div>
+  <main id="hud">
+    <section class="topbar">
+      <div class="brand"><span>ROBA UN</span><strong>BRAINROT 3D</strong></div>
+      <div class="stats">
+        <div><small>DINERO</small><b id="money">$100</b></div>
+        <div><small>GANANCIAS</small><b id="income">$0/s</b></div>
+        <div><small>BASE</small><b id="slots">0/8</b></div>
+      </div>
+      <div class="actions">
+        <button id="shopButton">TIENDA</button>
+        <button id="rebirthButton">RENA CER</button>
+        <button id="boxityInviteButton">INVITAR AMIGO</button>
+        <button id="boxityAdButton" hidden>ANUNCIO X2 · 2 MIN</button>
+      </div>
+    </section>
+    <button id="laserShieldButton" class="laser-shield-button">ESCUDO LÁSER · X</button>
+    <div id="notification" class="notification"></div>
+    <div id="context" class="context"></div>
+    <div id="shieldStatus" class="shield-status"></div>
+  </main>
+  <section id="touchControls">
+    <div id="joystick"><div id="joystickKnob"></div></div>
+    <button class="touch action-jump" data-action="jump">SALTO</button>
+    <button class="touch action-hit" data-action="hit">GOLPE</button>
+    <button class="touch action-interact" data-action="interact">E</button>
+  </section>
+  <section id="shop" class="panel hidden"><div class="panel-card">
+    <button class="close" data-close="shop">×</button><p>MEJORAS</p><h2>Tienda de equipamiento</h2>
+    <div class="shop-grid">
+      <button data-shop="speed">Bebida energética <b>$2,500</b></button>
+      <button data-shop="power">Guante fuerte <b>$8,000</b></button>
+      <button data-shop="shield">Escudo extendido <b>$12,000</b></button>
+      <button data-shop="trap">Trampa <b>$4,000</b></button>
+    </div>
+  </div></section>
+  <section id="rebirth" class="panel hidden"><div class="panel-card">
+    <button class="close" data-close="rebirth">×</button><p>PROGRESO PERMANENTE</p><h2>Rebirth</h2>
+    <div id="rebirthLevels"></div>
+  </div></section>
+</body>
+</html>

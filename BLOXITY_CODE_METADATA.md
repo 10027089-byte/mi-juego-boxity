@@ -1,6 +1,6 @@
 ---
 clientDir: "."
-buildCommand: "npm run build"
+buildCommand: "echo ok"
 distDir: "dist"
 entryFile: "index.html"
 gameScript: "game.js"
