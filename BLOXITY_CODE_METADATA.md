@@ -14,7 +14,7 @@ store: false
 notApplicable:
   - feature: death-screen
     reason: "El jugador no muere; los golpes solo aturden y al caer fuera del mapa vuelve a su base."
-  - feature: server-stats
+  - feature: stats
     reason: "El juego no tiene servidor propio ni estado de jugador autoritativo para reportar estadísticas."
   - feature: party-play
     reason: "El juego no crea salas de red; su sincronización local usa BroadcastChannel."

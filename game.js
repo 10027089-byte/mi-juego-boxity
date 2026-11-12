@@ -111,11 +111,16 @@ function initializeBoxity() {
       return;
     }
   }
-  SDK.leaderboard?.define?.([
-    { id: 'money', label: 'Dinero acumulado', order: 'desc', mode: 'best', format: 'compact', reset: 'none' },
-    { id: 'steals', label: 'Brainrots robados', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
-    { id: 'rebirths', label: 'Renacimientos', order: 'desc', mode: 'best', format: 'number', reset: 'none' }
-  ]);
+  if (typeof window.Legion.SDK.leaderboard?.define === 'function') {
+    window.Legion.SDK.leaderboard.define([
+      { id: 'money', label: 'Dinero acumulado', order: 'desc', mode: 'best', format: 'compact', reset: 'none' },
+      { id: 'steals', label: 'Brainrots robados', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
+      { id: 'rebirths', label: 'Renacimientos', order: 'desc', mode: 'best', format: 'number', reset: 'none' }
+    ]);
+  }
+  if (typeof window.Legion.SDK.game?.registerFeature === 'function') {
+    window.Legion.SDK.game.registerFeature('emotes');
+  }
   SDK.ads?.declareScreens?.({ gameplay: {}, panel: {} });
   SDK.ads?.onBreakStart?.(pauseForAdBreak);
   SDK.ads?.onBreakEnd?.(resumeFromAdBreak);
@@ -147,7 +152,7 @@ function initializeBoxity() {
   SDK.settings?.listen?.('camera_sensitivity', (value) => cameraSensitivity = Number(value) || cameraSensitivity);
   SDK.avatar?.onAvatarChanged?.((equipped) => loadRealAvatar(equipped || SDK.avatar?.getEquipped?.() || currentIdentity()?.avatar));
   SDK.avatar?.onProportionsChanged?.(() => loadRealAvatar(SDK.avatar?.getEquipped?.() || currentIdentity()?.avatar || {}));
-  ['avatar', 'chat', 'emotes', 'settings', 'touch_controls', 'leaderboard'].forEach((feature) => SDK.game?.registerFeature?.(feature));
+  ['avatar', 'chat', 'settings', 'touch_controls', 'leaderboard'].forEach((feature) => SDK.game?.registerFeature?.(feature));
   unsubscribePlayerEvents = SDK.player?.onEvent?.((event, data) => {
     if (event === 'play_emote') playEmote(player, data);
     if (event === 'respawn_request') resetCharacter();
@@ -552,7 +557,9 @@ async function loadOfficialAvatarModel(target, equipped, name, outfitKey, remote
     try {
       character = target === player && avatarApi?.getCharacter
         ? await avatarApi.getCharacter()
-        : await avatarApi?.getCharacterFor?.(equipped);
+        : typeof avatarApi?.getCharacterFor === 'function'
+          ? await window.Legion.SDK.avatar.getCharacterFor(equipped)
+          : null;
     } catch (error) {
       console.warn('No se pudo resolver el personaje personalizado de Boxity.', error);
     }
@@ -579,8 +586,9 @@ async function loadOfficialAvatarModel(target, equipped, name, outfitKey, remote
   const proportions = equipped.proportions || avatarApi?.getProportions?.();
   let dressing = null;
   try {
-    if (!customModelUrl && outfitKey && characterApi?.canDress?.(outfitKey) && characterApi.dress) {
-      dressing = await characterApi.dress({
+    if (!customModelUrl && outfitKey && typeof characterApi?.canDress === 'function' &&
+      typeof characterApi.dress === 'function' && window.Legion.SDK.character.canDress(outfitKey)) {
+      dressing = await window.Legion.SDK.character.dress({
         root: gltf.scene,
         GLTFLoader,
         THREE,
@@ -670,7 +678,9 @@ async function loadAvatarModel(url) {
 }
 
 async function applyAvatarTextureAndAccessories(root, equipped, version, target, character, customCharacter, staticUrl) {
-  const skinUrl = customCharacter ? null : SDK?.avatar?.getSkinTextureUrlFor?.(equipped);
+  const skinUrl = customCharacter || typeof window.Legion?.SDK?.avatar?.getSkinTextureUrlFor !== 'function'
+    ? null
+    : window.Legion.SDK.avatar.getSkinTextureUrlFor(equipped);
   if (skinUrl) {
     try {
       const texture = await new THREE.TextureLoader().loadAsync(skinUrl);
@@ -696,12 +706,20 @@ async function applyAvatarTextureAndAccessories(root, equipped, version, target,
   }
 
   const avatarApi = SDK?.avatar;
-  const slots = [...(avatarApi?.getAccessorySlots?.() || [])];
+  const slots = typeof window.Legion?.SDK?.avatar?.getAccessorySlots === 'function'
+    ? [...window.Legion.SDK.avatar.getAccessorySlots()]
+    : [];
   const fields = new Set(slots.map((slot) => slot.field));
   const hatId = (target === player ? avatarApi?.getHatId?.() : null) ?? equipped.hatId;
   const backId = (target === player ? avatarApi?.getBackId?.() : null) ?? equipped.backId;
-  if (hatId && !fields.has('hatId')) slots.push({ field: 'hatId', id: hatId, bone: 'Neck1', origin: [0, .8, 0] });
-  if (backId && !fields.has('backId')) slots.push({ field: 'backId', id: backId, bone: 'Spine2', origin: [0, 4.2, 0] });
+  [
+    { field: 'hatId', id: hatId, bone: 'Neck1', origin: [0, .8, 0] },
+    { field: 'hairId', id: equipped.hairId, bone: 'Neck1', origin: [0, .8, 0] },
+    { field: 'maskId', id: equipped.maskId, bone: 'Neck1', origin: [0, .8, 0] },
+    { field: 'backId', id: backId, bone: 'Spine2', origin: [0, 4.2, 0] }
+  ].forEach((slot) => {
+    if (slot.id && !fields.has(slot.field)) slots.push(slot);
+  });
   let restInverses = captureRestInverses(root);
   if (customCharacter && staticUrl) {
     try {
@@ -810,7 +828,9 @@ function attachAccessoryToBone(root, accessory, boneName, origin = [0, 0, 0], mi
   let characterMatrix = null;
   if (character) {
     try {
-      const matrix = SDK?.avatar?.characterAccessoryMatrix?.(character, boneName);
+      const matrix = typeof window.Legion?.SDK?.avatar?.characterAccessoryMatrix === 'function'
+        ? window.Legion.SDK.avatar.characterAccessoryMatrix(character, boneName)
+        : null;
       characterMatrix = matrix?.isMatrix4 ? matrix.clone()
         : (Array.isArray(matrix) || ArrayBuffer.isView(matrix)) && matrix.length === 16 ? new THREE.Matrix4().fromArray(matrix)
           : null;
